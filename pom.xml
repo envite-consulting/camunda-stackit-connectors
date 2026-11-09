@@ -91,7 +91,12 @@
     <version.assertj>3.27.7</version.assertj>
     <version.testcontainers>1.21.4</version.testcontainers>
     <version.wiremock>3.13.2</version.wiremock>
-    <version.logback>1.5.20</version.logback>
+    <!--
+      logback is deliberately NOT pinned here. The Spring Boot BOM manages logback-classic
+      and logback-core together; pinning only classic left core on the BOM's version, and
+      logback refuses to load appenders when the two differ - test logging configuration was
+      being silently dropped.
+    -->
 
     <!-- ==================== Plugins ==================== -->
     <plugin.version.clean>3.5.0</plugin.version.clean>
@@ -289,16 +294,20 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <!--
+        wiremock-standalone, not plain wiremock. Plain wiremock 3.x ships only Jetty 11
+        support, while the imported Spring Boot BOM forces part of the Jetty graph to 12.x;
+        WireMock's server-factory loader then finds no usable server and every stub fails
+        at startup with "Jetty 11 is not present". The standalone artifact relocates its own
+        Jetty under wiremock/, so no BOM can break it. wiremock-jetty12 does not help - it
+        targets Jetty 12.0.x, not the 12.1.x the BOM selects.
+      -->
       <dependency>
         <groupId>org.wiremock</groupId>
-        <artifactId>wiremock</artifactId>
+        <artifactId>wiremock-standalone</artifactId>
         <version>${version.wiremock}</version>
       </dependency>
-      <dependency>
-        <groupId>ch.qos.logback</groupId>
-        <artifactId>logback-classic</artifactId>
-        <version>${version.logback}</version>
-      </dependency>
+
     </dependencies>
   </dependencyManagement>
 

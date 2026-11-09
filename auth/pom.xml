@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
@@ -15,11 +13,9 @@
   <packaging>jar</packaging>
 
   <name>STACKIT Connectors for Camunda 8 :: Auth</name>
-  <description>
-    STACKIT platform authentication for connectors that talk to a STACKIT management API:
+  <description>STACKIT platform authentication for connectors that talk to a STACKIT management API:
     the service account key flow (RFC 7523 JWT bearer), with access token caching. Shared
-    by every connector whose service is reached through *.api.stackit.cloud.
-  </description>
+    by every connector whose service is reached through *.api.stackit.cloud.</description>
 
   <dependencies>
     <dependency>
@@ -48,6 +44,16 @@
       <artifactId>jakarta.validation-api</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!--
+      jackson-core must be declared explicitly even though jackson-databind depends on it:
+      `provided` scope is not transitive, so databind's own dependencies never reach the
+      compile classpath. The connector runtime supplies all three at runtime.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
@@ -64,19 +70,9 @@
       <scope>provided</scope>
     </dependency>
 
-    <!--
-      The official STACKIT SDK core. It is used for its service account key model and key
-      flow, but it is wrapped rather than exposed: it is BETA, its modules are versioned
-      independently, and it carries deprecations with announced removal dates.
-    -->
-    <dependency>
-      <groupId>cloud.stackit.sdk</groupId>
-      <artifactId>core</artifactId>
-    </dependency>
-
     <dependency>
       <groupId>org.wiremock</groupId>
-      <artifactId>wiremock</artifactId>
+      <artifactId>wiremock-standalone</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
