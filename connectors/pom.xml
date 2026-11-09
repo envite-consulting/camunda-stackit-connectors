@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.envite.camunda.stackit</groupId>
+    <artifactId>stackit-connectors</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>stackit-connectors-parent</artifactId>
+  <packaging>pom</packaging>
+
+  <name>STACKIT Connectors for Camunda 8 :: Connectors</name>
+  <description>
+    Parent for the individual STACKIT connector modules. Supplies the dependencies and the
+    build wiring (element template generation, shaded jar) that every connector needs.
+  </description>
+
+  <!--
+    Only implemented connectors are reactor modules. The archiving/ and workflows/
+    directories hold the API research and the planned design for the next two connectors;
+    they get a pom.xml when there is code to build. Publishing empty jars for them would
+    put artifacts on Maven Central that do nothing.
+  -->
+  <modules>
+    <module>object-storage</module>
+  </modules>
+
+  <dependencies>
+    <!--
+      The connector runtime provides the SDK, Jackson and SLF4J on the classpath. Declaring
+      them `provided` keeps them out of the shaded jar, which is what prevents the classic
+      "two Jackson versions on the classpath" failure when the jar is mounted into
+      camunda/connectors-bundle.
+    -->
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-validation</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>element-template-generator-annotations</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.validation</groupId>
+      <artifactId>jakarta.validation-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!--
+      Camunda's shared ObjectMapper configuration (FEEL + document datatypes). Compile
+      scope, matching how Camunda scopes it in their own connector modules.
+    -->
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-object-mapper</artifactId>
+    </dependency>
+
+    <!-- Shared STACKIT connector code. -->
+    <dependency>
+      <groupId>de.envite.camunda.stackit</groupId>
+      <artifactId>stackit-connector-core</artifactId>
+    </dependency>
+
+    <!-- Test stack shared by all connector modules. -->
+    <dependency>
+      <groupId>de.envite.camunda.stackit</groupId>
+      <artifactId>stackit-connector-core</artifactId>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-runtime-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>io.camunda.connector</groupId>
+          <artifactId>element-template-generator-maven-plugin</artifactId>
+          <configuration>
+            <versionHistoryEnabled>true</versionHistoryEnabled>
+            <!--
+              includeDependencies does not resolve transitively, so every module whose
+              classes take part in the @ElementTemplate graph must be listed explicitly.
+              All connector request models extend the shared base in stackit-connector-core.
+            -->
+            <includeDependencies>
+              <includeDependency>de.envite.camunda.stackit:stackit-connector-core</includeDependency>
+            </includeDependencies>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

@@ -1,0 +1,816 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>de.envite.camunda.stackit</groupId>
+  <artifactId>stackit-connectors</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>STACKIT Connectors for Camunda 8</name>
+  <description>
+    Camunda 8 Connectors for STACKIT managed services: a shared core, shared STACKIT
+    authentication, and one module per connected service.
+  </description>
+  <url>https://github.com/envite-consulting/camunda-stackit-connectors</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>envite consulting GmbH</name>
+    <url>https://www.envite.de</url>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>The Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+      <comments>
+        Distributed with the Camunda Marketplace third-party connector notice; see the
+        LICENSE file at the root of this repository.
+      </comments>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <name>envite consulting GmbH</name>
+      <organization>envite consulting GmbH</organization>
+      <organizationUrl>https://www.envite.de</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/envite-consulting/camunda-stackit-connectors.git</connection>
+    <developerConnection>scm:git:git@github.com:envite-consulting/camunda-stackit-connectors.git</developerConnection>
+    <url>https://github.com/envite-consulting/camunda-stackit-connectors</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/envite-consulting/camunda-stackit-connectors/issues</url>
+  </issueManagement>
+
+  <modules>
+    <module>core</module>
+    <module>auth</module>
+    <module>connectors</module>
+    <module>bundle</module>
+  </modules>
+
+  <properties>
+    <!-- ==================== Build ==================== -->
+    <java.version>21</java.version>
+    <maven.compiler.release>${java.version}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <maven.minimum.version>3.10.0</maven.minimum.version>
+    <!-- Reproducible builds: https://maven.apache.org/guides/mini/guide-reproducible-builds.html -->
+    <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
+
+    <!--
+      The Camunda Connector SDK minor version must match the minor version of the Camunda
+      Connector Runtime the connectors are deployed into; only patch versions are freely
+      interchangeable. Bump version.connectors, version.camunda and engineVersion in the
+      @ElementTemplate annotations together. See AGENTS.md ("Upgrading Camunda").
+    -->
+    <version.connectors>8.10.4</version.connectors>
+    <version.camunda>8.10.9</version.camunda>
+    <!-- Must be kept in sync with version.connectors; feeds @ElementTemplate(engineVersion). -->
+    <camunda.engine.version.range>^8.10</camunda.engine.version.range>
+
+    <!-- ==================== Dependencies ==================== -->
+    <version.stackit-sdk-core>0.4.1</version.stackit-sdk-core>
+    <version.stackit-sdk-objectstorage>0.5.0</version.stackit-sdk-objectstorage>
+    <version.aws-sdk2>2.57.11</version.aws-sdk2>
+    <version.jackson>2.23.0</version.jackson>
+    <version.jakarta-validation>3.1.1</version.jakarta-validation>
+    <version.slf4j>2.0.20</version.slf4j>
+    <version.spring-boot>4.1.2</version.spring-boot>
+
+    <!-- ==================== Test dependencies ==================== -->
+    <version.junit>6.1.3</version.junit>
+    <version.mockito>5.24.0</version.mockito>
+    <version.assertj>3.27.7</version.assertj>
+    <version.testcontainers>1.21.4</version.testcontainers>
+    <version.wiremock>3.13.2</version.wiremock>
+    <version.logback>1.5.20</version.logback>
+
+    <!-- ==================== Plugins ==================== -->
+    <plugin.version.clean>3.5.0</plugin.version.clean>
+    <plugin.version.compiler>3.16.0</plugin.version.compiler>
+    <plugin.version.dependency>3.11.0</plugin.version.dependency>
+    <plugin.version.deploy>3.2.0</plugin.version.deploy>
+    <plugin.version.enforcer>3.7.0</plugin.version.enforcer>
+    <plugin.version.exec>3.6.4</plugin.version.exec>
+    <plugin.version.failsafe>3.6.1</plugin.version.failsafe>
+    <plugin.version.flatten>1.9.0</plugin.version.flatten>
+    <plugin.version.gpg>3.2.8</plugin.version.gpg>
+    <plugin.version.install>3.2.0</plugin.version.install>
+    <plugin.version.jacoco>0.8.16</plugin.version.jacoco>
+    <plugin.version.jar>3.5.1</plugin.version.jar>
+    <plugin.version.javadoc>3.12.0</plugin.version.javadoc>
+    <plugin.version.license>5.1.2</plugin.version.license>
+    <plugin.version.resources>3.5.0</plugin.version.resources>
+    <plugin.version.shade>3.6.2</plugin.version.shade>
+    <plugin.version.sonatype-central>0.12.0</plugin.version.sonatype-central>
+    <plugin.version.source>3.4.0</plugin.version.source>
+    <plugin.version.spotless>3.11.0</plugin.version.spotless>
+    <plugin.version.surefire>3.6.1</plugin.version.surefire>
+    <plugin.version.versions>2.24.0</plugin.version.versions>
+
+    <!-- ==================== Conventions ==================== -->
+    <!--
+      Integration tests are tagged @Tag("integration") and run by failsafe (mvn verify).
+      Surefire excludes them so that `mvn test` needs no Docker daemon.
+    -->
+    <!--
+      Default so that surefire's @{jacoco.argLine} resolves even when JaCoCo is skipped
+      (e.g. `-Djacoco.skip=true`); the prepare-agent goal overwrites it when it runs.
+    -->
+    <jacoco.argLine />
+    <surefire.excluded.groups>integration</surefire.excluded.groups>
+    <failsafe.included.groups>integration</failsafe.included.groups>
+    <skipITs>false</skipITs>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- ===== Own modules ===== -->
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>stackit-connector-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>stackit-connector-core</artifactId>
+        <version>${project.version}</version>
+        <type>test-jar</type>
+      </dependency>
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>stackit-connector-auth</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>stackit-connector-object-storage</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!--
+        Imported before the Camunda SDK and AWS SDK so that a single Jackson line is used
+        everywhere; the connector runtime provides Jackson at runtime, and a split version
+        between the connector jar and the runtime is a classic source of NoSuchMethodError.
+      -->
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${version.jackson}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- ===== Camunda Connector SDK ===== -->
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-core</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-validation</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-object-mapper</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>element-template-generator-annotations</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-runtime-core</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-runtime-test</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>connector-test</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>spring-boot-starter-camunda-connectors</artifactId>
+        <version>${version.connectors}</version>
+      </dependency>
+
+      <!-- ===== Camunda process testing ===== -->
+      <dependency>
+        <groupId>io.camunda</groupId>
+        <artifactId>camunda-process-test-spring</artifactId>
+        <version>${version.camunda}</version>
+      </dependency>
+
+      <!-- ===== STACKIT SDK ===== -->
+      <dependency>
+        <groupId>cloud.stackit.sdk</groupId>
+        <artifactId>core</artifactId>
+        <version>${version.stackit-sdk-core}</version>
+      </dependency>
+      <dependency>
+        <groupId>cloud.stackit.sdk</groupId>
+        <artifactId>objectstorage</artifactId>
+        <version>${version.stackit-sdk-objectstorage}</version>
+      </dependency>
+
+      <!-- ===== AWS SDK v2 (S3 wire protocol for STACKIT Object Storage) ===== -->
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${version.aws-sdk2}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- ===== Misc ===== -->
+      <dependency>
+        <groupId>jakarta.validation</groupId>
+        <artifactId>jakarta.validation-api</artifactId>
+        <version>${version.jakarta-validation}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${version.slf4j}</version>
+      </dependency>
+
+      <!-- ===== Spring Boot (bundle runtime only) ===== -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${version.spring-boot}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- ===== Test ===== -->
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${version.junit}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-bom</artifactId>
+        <version>${version.mockito}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-bom</artifactId>
+        <version>${version.assertj}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${version.testcontainers}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.wiremock</groupId>
+        <artifactId>wiremock</artifactId>
+        <version>${version.wiremock}</version>
+      </dependency>
+      <dependency>
+        <groupId>ch.qos.logback</groupId>
+        <artifactId>logback-classic</artifactId>
+        <version>${version.logback}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Available to every module; keeps test boilerplate out of the leaf poms. -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>${plugin.version.clean}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>${plugin.version.resources}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>${plugin.version.install}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>${plugin.version.deploy}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${plugin.version.jar}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${plugin.version.compiler}</version>
+          <configuration>
+            <!--
+              -parameters keeps record component and constructor parameter names in the
+              bytecode. Jackson and the Camunda @Variable binder resolve inputs by name, so
+              without it every record-based request model would need @JsonProperty.
+            -->
+            <parameters>true</parameters>
+            <compilerArgs>
+              <arg>-Xlint:all,-processing,-serial</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${plugin.version.surefire}</version>
+          <configuration>
+            <excludedGroups>${surefire.excluded.groups}</excludedGroups>
+            <redirectTestOutputToFile>true</redirectTestOutputToFile>
+            <!-- Pin the locale so that message/format assertions are machine independent. -->
+            <argLine>@{jacoco.argLine} -Duser.language=en -Duser.region=US -Duser.timezone=UTC</argLine>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-failsafe-plugin</artifactId>
+          <version>${plugin.version.failsafe}</version>
+          <configuration>
+            <groups>${failsafe.included.groups}</groups>
+            <skipITs>${skipITs}</skipITs>
+            <redirectTestOutputToFile>true</redirectTestOutputToFile>
+            <argLine>-Duser.language=en -Duser.region=US -Duser.timezone=UTC</argLine>
+          </configuration>
+          <executions>
+            <execution>
+              <goals>
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>${plugin.version.source}</version>
+          <executions>
+            <execution>
+              <id>attach-sources</id>
+              <goals>
+                <goal>jar-no-fork</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${plugin.version.javadoc}</version>
+          <configuration>
+            <doclint>all,-missing</doclint>
+            <quiet>true</quiet>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-dependency-plugin</artifactId>
+          <version>${plugin.version.dependency}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>${plugin.version.shade}</version>
+          <configuration>
+            <!--
+              Attach as a classifier instead of replacing the main artifact: the thin jar is
+              what downstream modules and the bundle depend on, the shaded one is what users
+              mount into camunda/connectors-bundle.
+            -->
+            <shadedArtifactAttached>true</shadedArtifactAttached>
+            <shadedClassifierName>with-dependencies</shadedClassifierName>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <filters>
+              <filter>
+                <artifact>*:*</artifact>
+                <excludes>
+                  <exclude>module-info.class</exclude>
+                  <exclude>META-INF/MANIFEST.MF</exclude>
+                  <exclude>META-INF/*.SF</exclude>
+                  <exclude>META-INF/*.DSA</exclude>
+                  <exclude>META-INF/*.RSA</exclude>
+                  <exclude>META-INF/versions/*/module-info.class</exclude>
+                </excludes>
+              </filter>
+            </filters>
+            <transformers>
+              <!--
+                ServicesResourceTransformer is mandatory: without it the merged jar loses the
+                META-INF/services entry and the connector runtime never discovers the
+                connector.
+              -->
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer">
+                <addHeader>false</addHeader>
+              </transformer>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"/>
+            </transformers>
+          </configuration>
+          <executions>
+            <execution>
+              <phase>package</phase>
+              <goals>
+                <goal>shade</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>${plugin.version.enforcer}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>${plugin.version.gpg}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${plugin.version.exec}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>flatten-maven-plugin</artifactId>
+          <version>${plugin.version.flatten}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>versions-maven-plugin</artifactId>
+          <version>${plugin.version.versions}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${plugin.version.jacoco}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.sonatype.central</groupId>
+          <artifactId>central-publishing-maven-plugin</artifactId>
+          <version>${plugin.version.sonatype-central}</version>
+        </plugin>
+        <plugin>
+          <groupId>com.diffplug.spotless</groupId>
+          <artifactId>spotless-maven-plugin</artifactId>
+          <version>${plugin.version.spotless}</version>
+          <configuration>
+            <java>
+              <!-- Same formatter Camunda uses for the connector monorepo. -->
+              <googleJavaFormat/>
+              <removeUnusedImports/>
+              <importOrder/>
+            </java>
+            <pom>
+              <sortPom>
+                <expandEmptyElements>false</expandEmptyElements>
+                <spaceBeforeCloseEmptyElement>true</spaceBeforeCloseEmptyElement>
+                <nrOfIndentSpace>2</nrOfIndentSpace>
+                <sortDependencies/>
+                <sortPlugins/>
+              </sortPom>
+            </pom>
+            <json>
+              <includes>
+                <!--
+                  element-templates/ is build output of the template generator and must stay
+                  byte-identical to what the generator emits, so it is deliberately excluded.
+                -->
+                <include>src/**/*.json</include>
+              </includes>
+              <gson>
+                <indentSpaces>2</indentSpaces>
+              </gson>
+            </json>
+            <formats>
+              <format>
+                <includes>
+                  <include>.gitignore</include>
+                  <include>.gitattributes</include>
+                  <include>.editorconfig</include>
+                  <include>**/*.yml</include>
+                  <include>**/*.yaml</include>
+                </includes>
+                <excludes>
+                  <exclude>**/target/**</exclude>
+                </excludes>
+                <trimTrailingWhitespace/>
+                <endWithNewline/>
+              </format>
+            </formats>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>com.mycila</groupId>
+          <artifactId>license-maven-plugin</artifactId>
+          <version>${plugin.version.license}</version>
+          <configuration>
+            <properties>
+              <inceptionYear>${project.inceptionYear}</inceptionYear>
+            </properties>
+            <mapping>
+              <java>SLASHSTAR_STYLE</java>
+            </mapping>
+            <skipExistingHeaders>false</skipExistingHeaders>
+            <licenseSets>
+              <licenseSet>
+                <header>${maven.multiModuleProjectDirectory}/build/license-header.txt</header>
+                <includes>
+                  <include>**/*.java</include>
+                </includes>
+                <excludes>
+                  <exclude>**/target/**</exclude>
+                </excludes>
+              </licenseSet>
+            </licenseSets>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>io.camunda.connector</groupId>
+          <artifactId>element-template-generator-maven-plugin</artifactId>
+          <version>${version.connectors}</version>
+          <executions>
+            <execution>
+              <!--
+                process-classes (not package) so that a plain `mvn test` already regenerates
+                the templates. CI then diffs the working tree to prove the committed
+                templates match the annotations.
+              -->
+              <phase>process-classes</phase>
+              <goals>
+                <goal>generate-templates</goal>
+              </goals>
+            </execution>
+          </executions>
+          <configuration>
+            <versionHistoryEnabled>true</versionHistoryEnabled>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${version.spring-boot}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-build-environment</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <!--
+                  element-template-generator-maven-plugin declares requiredMavenVersion 3.10.0
+                  and requiredJavaVersion 21. Fail early and clearly rather than in the middle
+                  of template generation; ./mvnw pins a compatible Maven.
+                -->
+                <requireMavenVersion>
+                  <version>[${maven.minimum.version},)</version>
+                  <message>
+                    Maven ${maven.minimum.version} or newer is required (the Camunda element
+                    template generator plugin requires it). Use ./mvnw, which pins a
+                    compatible Maven automatically.
+                  </message>
+                </requireMavenVersion>
+                <requireJavaVersion>
+                  <version>[${java.version},)</version>
+                  <message>Java ${java.version} or newer is required to build this project.</message>
+                </requireJavaVersion>
+                <banDuplicatePomDependencyVersions/>
+                <requireUpperBoundDeps/>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+            <configuration>
+              <propertyName>jacoco.argLine</propertyName>
+            </configuration>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+      Formatting and license headers are applied automatically on a normal build so that
+      contributors never have to remember a separate command. CI runs with -P'!autoFormat'
+      and checks instead, so an unformatted commit still fails the pipeline.
+    -->
+    <profile>
+      <id>autoFormat</id>
+      <activation>
+        <activeByDefault>true</activeByDefault>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.diffplug.spotless</groupId>
+            <artifactId>spotless-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>spotless-apply</id>
+                <phase>process-sources</phase>
+                <goals>
+                  <goal>apply</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>com.mycila</groupId>
+            <artifactId>license-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>license-format</id>
+                <phase>process-sources</phase>
+                <goals>
+                  <goal>format</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <profile>
+      <id>checkFormat</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.diffplug.spotless</groupId>
+            <artifactId>spotless-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>spotless-check</id>
+                <phase>validate</phase>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>com.mycila</groupId>
+            <artifactId>license-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>license-check</id>
+                <phase>validate</phase>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Publishing to Maven Central via the Sonatype Central Portal. -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>false</autoPublish>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

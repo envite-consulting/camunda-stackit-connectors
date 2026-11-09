@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.envite.camunda.stackit</groupId>
+    <artifactId>stackit-connectors</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>stackit-connectors-bundle</artifactId>
+  <packaging>jar</packaging>
+
+  <name>STACKIT Connectors for Camunda 8 :: Bundle</name>
+  <description>
+    A ready-to-run Camunda Connector Runtime containing every STACKIT connector. Use this
+    when you want one process to serve all STACKIT connectors; use the individual
+    -with-dependencies jars when you want to add STACKIT connectors to an existing
+    camunda/connectors-bundle deployment.
+  </description>
+
+  <properties>
+    <!-- The runtime jar is an application, not a library: nothing to publish or sign. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <maven.javadoc.skip>true</maven.javadoc.skip>
+    <maven.source.skip>true</maven.source.skip>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>spring-boot-starter-camunda-connectors</artifactId>
+    </dependency>
+
+    <!--
+      Every connector in this repository. The runtime discovers them through their
+      META-INF/services entries, so no wiring code is needed - adding a module here is
+      enough.
+    -->
+    <dependency>
+      <groupId>de.envite.camunda.stackit</groupId>
+      <artifactId>stackit-connector-object-storage</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+            <configuration>
+              <classifier>with-dependencies</classifier>
+              <mainClass>de.envite.camunda.stackit.bundle.StackitConnectorsApplication</mainClass>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

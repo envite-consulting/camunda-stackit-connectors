@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>de.envite.camunda.stackit</groupId>
+    <artifactId>stackit-connectors-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>stackit-connector-object-storage</artifactId>
+  <packaging>jar</packaging>
+
+  <name>STACKIT Connectors for Camunda 8 :: Object Storage</name>
+  <description>
+    Camunda 8 outbound connector for STACKIT Object Storage, the S3-compatible object store
+    of the STACKIT cloud.
+  </description>
+
+  <properties>
+    <element.template.id>de.envite.connectors.stackit.objectstorage.v1</element.template.id>
+    <element.template.file>stackit-object-storage-outbound-connector.json</element.template.file>
+    <connector.class>
+      de.envite.camunda.stackit.objectstorage.StackitObjectStorageConnectorFunction
+    </connector.class>
+  </properties>
+
+  <dependencies>
+    <!--
+      The S3 data plane is spoken with the AWS SDK v2 against an endpoint override. The
+      STACKIT Java SDK covers only the management API (buckets, credential groups), which
+      this connector does not use - see README.md, "Scope".
+    -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>aws-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sdk-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>regions</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>auth</artifactId>
+    </dependency>
+
+    <!-- Integration tests run against a real S3 implementation in Docker. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.camunda.connector</groupId>
+        <artifactId>element-template-generator-maven-plugin</artifactId>
+        <configuration>
+          <connectors>
+            <connector>
+              <connectorClass>${connector.class}</connectorClass>
+              <files>
+                <file>
+                  <!-- Must equal @ElementTemplate(id = ...) or the file name mapping is ignored. -->
+                  <templateId>${element.template.id}</templateId>
+                  <templateFileName>${element.template.file}</templateFileName>
+                </file>
+              </files>
+              <generateHybridTemplates>true</generateHybridTemplates>
+            </connector>
+          </connectors>
+        </configuration>
+      </plugin>
+
+      <!-- Produces the -with-dependencies jar users mount into camunda/connectors-bundle. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
