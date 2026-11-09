@@ -14,9 +14,14 @@ Maintained by [envite consulting GmbH](https://www.envite.de).
 
 | Connector | Service | Type | Status |
 | --- | --- | --- | --- |
-| [Object Storage](connectors/object-storage) | [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/) (S3) | Outbound | **Available** |
+| [Object Storage](connectors/object-storage) | [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/) (S3) | Outbound | **Available** — 8 operations |
 | [Archiving](connectors/archiving) | [STACKIT Archiving Service](https://docs.stackit.cloud/products/storage/archiving/) | — | Design document — blocked, see below |
 | [Workflows](connectors/workflows) | [STACKIT Workflows](https://docs.stackit.cloud/products/data-and-ai/workflows/) (managed Airflow) | — | Design document — blocked, see below |
+
+The Object Storage connector covers **upload**, **download**, **delete**, **copy**, **list**,
+**get metadata**, and **presigned download / upload URLs** — reading from and writing to
+[Camunda documents](https://docs.camunda.io/docs/components/concepts/document-handling/), so a
+file can flow through a process without ever being pasted into a variable.
 
 The Archiving and Workflows directories hold research and design documents rather than code,
 and deliberately have no `pom.xml` — shipping empty artifacts would be worse than shipping
@@ -165,6 +170,8 @@ wrapper — use `./mvnw`, not a system `mvn`:
 ./mvnw -B verify      # build, unit tests, integration tests, element template generation
 ./mvnw -B test        # unit tests only, no Docker required
 ```
+
+`verify` currently runs 403 unit tests and 10 Docker-backed integration tests.
 
 The wrapper pins Maven 3.10.0 because Camunda's element template generator plugin requires
 it. [`AGENTS.md`](AGENTS.md) is the full technical guide — build conventions, architecture
