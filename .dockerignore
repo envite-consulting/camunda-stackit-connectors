@@ -1,0 +1,51 @@
+# Build context exclusions for bundle/Dockerfile, which is built from the repository root.
+# Keep this in sync with .gitignore - anything secret or machine-local must never enter an image
+# layer, because a layer is world-readable to anyone who can pull the image.
+
+# Maven output. **/target also covers the module targets; the root-level entry is kept explicit
+# because that is the one that holds the aggregated reports.
+target/
+**/target/
+**/dependency-reduced-pom.xml
+**/.flattened-pom.xml
+
+# Version control and CI metadata: large, and never needed to compile.
+.git/
+.gitattributes
+.github/
+
+# IDE and OS clutter
+.idea/
+**/*.iml
+.vscode/
+.settings/
+.classpath
+.project
+**/.DS_Store
+
+# Node tooling for element-template schema validation - not part of the Java build.
+tools/node_modules/
+
+# Local configuration and credentials. .env.example is intentionally NOT excluded: it is the
+# committed template and contains no values.
+**/.env
+**/.env.*
+!**/.env.example
+**/*-service-account-key.json
+**/sa-key*.json
+**/credentials.json
+**/connector-secrets.txt
+**/*.log
+
+# Docs, examples and local state the image does not need. Excluding them keeps the context small
+# and avoids a docs-only change busting the "COPY . ." layer.
+docs/
+examples/
+**/README.md
+AGENTS.md
+CLAUDE.md
+renovate.json
+
+# The wrapper jar is downloaded by mvnw itself; shipping a stale one into the context is worse
+# than letting the wrapper fetch it.
+.mvn/wrapper/maven-wrapper.jar

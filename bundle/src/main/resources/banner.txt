@@ -1,0 +1,6 @@
+  ____ _____  _    ____ _  _____ _____
+ / ___|_   _|/ \  / ___| |/ /_ _|_   _|   STACKIT Connectors for Camunda 8
+ \___ \ | | / _ \| |   | ' / | |  | |     envite consulting GmbH
+  ___) || |/ ___ \ |___| . \ | |  | |     Camunda Connector Runtime on Spring Boot ${spring-boot.version}
+ |____/ |_/_/   \_\____|_|\_\___| |_|     https://github.com/envite-consulting/camunda-stackit-connectors
+

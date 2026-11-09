@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------------------------------------
+# Defaults for the STACKIT Connectors bundle.
+#
+# Every value here is a default that an operator is expected to override. Spring Boot's relaxed
+# binding means each property below also has an environment-variable form: uppercase it, drop the
+# dashes, and turn the dots into underscores - `camunda.client.grpc-address` becomes
+# `CAMUNDA_CLIENT_GRPCADDRESS`. bundle/README.md carries the full reference table.
+#
+# Property names were taken from the Camunda sources that read them, not from prose:
+#   - camunda.client.*    -> io.camunda:camunda-spring-boot-starter, documented at
+#                            https://docs.camunda.io/docs/apis-tools/camunda-spring-boot-starter/properties-reference/
+#   - camunda.connector.* -> io.camunda.connector:connector-runtime-spring and
+#                            spring-boot-starter-camunda-connectors, documented at
+#                            https://docs.camunda.io/docs/self-managed/components/connectors/connectors-configuration/
+# ---------------------------------------------------------------------------------------------
+
+server:
+  # The connector runtime is a web application: it serves the actuator endpoints and, for inbound
+  # connectors, the webhook endpoints. 8080 matches camunda/connectors-bundle, so a user swapping
+  # that image for this one keeps their port mappings.
+  port: 8080
+
+camunda:
+  client:
+    # `self-managed` or `saas`. Left at `self-managed` so that the bundle talks to a local
+    # Orchestration Cluster out of the box. For a Camunda SaaS cluster (hybrid mode) set
+    # CAMUNDA_CLIENT_MODE=saas plus CAMUNDA_CLIENT_CLOUD_CLUSTERID, CAMUNDA_CLIENT_CLOUD_REGION,
+    # CAMUNDA_CLIENT_AUTH_CLIENTID and CAMUNDA_CLIENT_AUTH_CLIENTSECRET; the `saas` mode templates
+    # the addresses below, so leave them unset in that case.
+    #
+    # NOTE: pinning the mode here disables the starter's "infer saas from a configured cluster id"
+    # fallback. In this bundle that is on purpose - an explicit mode is far easier to support than
+    # one inferred from whichever variables happen to be present.
+    mode: self-managed
+
+    # Where the Orchestration Cluster is. These are the defaults of a Camunda 8 Self-Managed
+    # Docker Compose / Camunda 8 Run setup on the same host. Both need the scheme.
+    grpc-address: http://localhost:26500
+    rest-address: http://localhost:8080
+
+    # Job activation is gRPC-only for the connector runtime; REST is used for the secondary
+    # operations (topology, document store). Matches camunda/connectors-bundle.
+    prefer-rest-over-grpc: false
+
+    worker:
+      defaults:
+        # One connector job worker is opened per discovered connector type. 100 in-flight jobs per
+        # worker matches camunda/connectors-bundle; lower it if a connector is memory-hungry
+        # (CAMUNDA_CLIENT_WORKER_DEFAULTS_MAXJOBSACTIVE).
+        max-jobs-active: 100
+        # Job streaming (long-lived push) instead of pure polling: lower latency and far less
+        # chatter against the gateway. Needs a gateway that supports streaming - every supported
+        # Camunda 8.8+ cluster does. Set to false if an intermediary proxy kills idle streams.
+        stream-enabled: true
+
+  connector:
+    polling:
+      # Drives the process-definition import that *inbound* connectors need: the runtime polls the
+      # cluster for deployed process definitions and activates inbound executables from them.
+      #
+      # Every connector in this bundle is OUTBOUND, so the poll loop would do nothing but generate
+      # cluster traffic. Set CAMUNDA_CONNECTOR_POLLING_ENABLED=true if you mount an additional
+      # inbound connector into this runtime (see bundle/README.md, "Adding more connectors").
+      enabled: false
+
+logging:
+  level:
+    # The Camunda connector runtime: job activation, secret resolution, connector invocation.
+    io.camunda.connector: INFO
+    # The STACKIT connectors themselves.
+    de.envite.camunda.stackit: INFO
+  pattern:
+    # Puts the runtime's MDC (job key, connector type, process instance) on every line. Taken from
+    # camunda/connectors-bundle; without it, correlating a connector error with a process instance
+    # means reading the message text.
+    level: "%5p %mdc"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Deliberately narrow. `health` backs the container health check, `metrics` backs
+        # monitoring, `loggers` lets you raise a log level at runtime without a restart. Nothing
+        # here is authenticated, so do not expose this port outside the deployment.
+        #
+        # `prometheus` is NOT listed: this bundle has no Micrometer registry implementation on its
+        # classpath (only micrometer-core), so the endpoint would not exist and listing it would
+        # only promise something that answers 500. To scrape Prometheus, add
+        # io.micrometer:micrometer-registry-prometheus to bundle/pom.xml and append `prometheus`
+        # here.
+        include: health,metrics,loggers
+  endpoint:
+    health:
+      # Exposes /actuator/health/liveness and /actuator/health/readiness outside Kubernetes too.
+      probes:
+        enabled: true
+      show-components: always
+      show-details: always
+      group:
+        # readiness = "can this runtime do its job": cluster reachable, and - when inbound polling
+        # is enabled - the process-definition import caught up. `processDefinitionImport` reports
+        # UP while polling is disabled, so it is harmless to keep listed.
+        # Bean names: zeebeClientHealthIndicator, processDefinitionImportHealthIndicator and
+        # startupCheck, all from ConnectorsObservabilityAutoConfiguration.
+        readiness:
+          include: zeebeClient,processDefinitionImport
+        liveness:
+          include: zeebeClient
+        startup:
+          include: startupCheck

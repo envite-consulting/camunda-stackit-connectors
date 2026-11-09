@@ -1,0 +1,3 @@
+# The generated element templates are symlinked or copied in here by developers; see README.md.
+# Never commit them - they would drift from connectors/*/element-templates/.
+*.json

@@ -1,0 +1,165 @@
+# ---------------------------------------------------------------------------------------------
+# Local end-to-end setup: a Camunda 8 Orchestration Cluster plus the STACKIT Connectors bundle.
+#
+#   cp .env.example .env && $EDITOR .env      # fill in the two STACKIT_S3 values
+#   docker compose up -d --build
+#
+# Development only. It runs the Orchestration Cluster with basic authentication, an unprotected
+# API and file-based H2 storage so that the whole stack is two containers. For anything else, see
+# https://docs.camunda.io/docs/self-managed/setup/install/
+#
+# Shape and image tags follow the official distribution at
+# https://github.com/camunda/camunda-distributions/tree/main/docker-compose/versions/camunda-8.10
+# with one deliberate difference: that file runs `camunda/connectors-bundle` as a `connectors`
+# service, and this one runs the STACKIT bundle instead.
+#
+# NOTE ON THE BUNDLED CONNECTORS CONTAINER
+# Two connector runtimes that both activate the job type `de.envite:stackit-object-storage:1`
+# would race for every job, and the one without the STACKIT connector on its classpath would fail
+# the ones it won. This file simply does not declare a `connectors` service, so there is nothing
+# to race with. If you instead start Camunda's own compose file and add this bundle on top, you
+# have to keep its connectors container out of the way:
+#
+#   docker compose up -d --scale connectors=0            # ad hoc, per invocation
+#
+# or, persistently, a docker-compose.override.yaml next to Camunda's file with
+# `services: {connectors: {deploy: {replicas: 0}}}`. Nothing in Camunda's compose depends_on
+# `connectors`, so both are safe. (`--scale` is a Compose feature, not something Camunda's own
+# README documents - verify it behaves as you expect before relying on it in CI.)
+# ---------------------------------------------------------------------------------------------
+
+name: stackit-connectors-example
+
+services:
+  # Named volumes are created root-owned, while the Camunda image runs as UID 1001. Without this
+  # one-shot chown the Orchestration Cluster cannot create its H2 database file on Linux hosts.
+  camunda-data-init:
+    image: camunda/camunda:${CAMUNDA_VERSION}
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chown -R 1001:1001 /usr/local/camunda/camunda-data && chmod 775 /usr/local/camunda/camunda-data
+    volumes:
+      - camunda-data:/usr/local/camunda/camunda-data
+    restart: "no"
+    networks:
+      - camunda
+
+  # The Camunda 8 Orchestration Cluster: Zeebe, Operate and Tasklist in one container since 8.8.
+  orchestration:
+    image: camunda/camunda:${CAMUNDA_VERSION}
+    container_name: stackit-example-orchestration
+    ports:
+      # 26500 gRPC (job activation), 8080 REST API + Operate/Tasklist UI, 9600 management.
+      - "26500:26500"
+      - "8080:8080"
+      - "9600:9600"
+    mem_limit: 2g
+    restart: on-failure
+    healthcheck:
+      # The image has no curl, so this talks HTTP over bash's /dev/tcp. Taken verbatim from the
+      # official distribution compose file.
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/9600 && echo -e "GET /actuator/health/status HTTP/1.1\r\nHost: localhost\r\n\r\n" >&3 && head -n 1 <&3'''
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    volumes:
+      - camunda:/usr/local/camunda/data
+      - camunda-data:/usr/local/camunda/camunda-data
+    configs:
+      - source: orchestration-config
+        target: /usr/local/camunda/config/application.yaml
+    networks:
+      - camunda
+    depends_on:
+      camunda-data-init:
+        condition: service_completed_successfully
+
+  # This repository's bundle: a Connector Runtime containing every STACKIT connector.
+  stackit-connectors:
+    image: ${STACKIT_CONNECTORS_IMAGE}
+    build:
+      # The build context is the repository root - the bundle is the last module of the reactor
+      # and needs its siblings' sources. See bundle/Dockerfile.
+      context: ..
+      dockerfile: bundle/Dockerfile
+    container_name: stackit-example-connectors
+    ports:
+      # Actuator on http://localhost:8086/actuator/health. 8086 keeps host 8080 free for the
+      # Orchestration Cluster, and matches the port the official compose gives its connectors.
+      - "8086:8080"
+    mem_limit: 1g
+    restart: on-failure
+    environment:
+      # Cluster connection. The bundle's application.yaml defaults to localhost, which inside a
+      # container means the container itself, so these two have to be set.
+      CAMUNDA_CLIENT_MODE: self-managed
+      CAMUNDA_CLIENT_GRPCADDRESS: http://orchestration:26500
+      CAMUNDA_CLIENT_RESTADDRESS: http://orchestration:8080
+
+      # STACKIT Object Storage credentials, read from .env. The `:?` form fails `docker compose up`
+      # with this message instead of starting a runtime that cannot authenticate and only reports
+      # it once a job incident appears.
+      #
+      # `SECRET_` is the prefix the environment secret provider prepends since Camunda 8.9, so
+      # SECRET_STACKIT_S3_ACCESS_KEY backs the BPMN reference {{secrets.STACKIT_S3_ACCESS_KEY}}.
+      SECRET_STACKIT_S3_ACCESS_KEY: ${SECRET_STACKIT_S3_ACCESS_KEY:?set it in examples/.env - see .env.example}
+      SECRET_STACKIT_S3_SECRET_ACCESS_KEY: ${SECRET_STACKIT_S3_SECRET_ACCESS_KEY:?set it in examples/.env - see .env.example}
+    # The HEALTHCHECK baked into the image (GET /actuator/health/readiness) is inherited; it
+    # reports DOWN until the cluster is reachable, so it is a real readiness signal here.
+    networks:
+      - camunda
+    depends_on:
+      orchestration:
+        # Without this the runtime spends its first half minute logging connection failures.
+        condition: service_healthy
+
+volumes:
+  camunda:
+  camunda-data:
+
+networks:
+  camunda:
+    name: stackit-connectors-example
+
+configs:
+  # Inlined rather than mounted from a file so that examples/ stays a single compose file plus a
+  # .env. Derived from configuration/application-h2.yaml of the official distribution.
+  orchestration-config:
+    content: |
+      camunda:
+        security:
+          authentication:
+            method: "basic"
+            # Lets the connector runtime talk to the cluster with no credentials at all, which is
+            # what keeps this example short. A real deployment uses OIDC and sets
+            # CAMUNDA_CLIENT_AUTH_* on the connectors container instead.
+            unprotectedApi: true
+          authorizations:
+            enabled: false
+          initialization:
+            users:
+              - username: "${CAMUNDA_DEMO_USER:-demo}"
+                password: "${CAMUNDA_DEMO_PASSWORD:-demo}"
+                name: "Demo User"
+                email: "demo@example.com"
+            defaultRoles.admin.users:
+              - "${CAMUNDA_DEMO_USER:-demo}"
+        data:
+          secondary-storage:
+            # File-based H2 instead of Elasticsearch: Camunda 8.10 no longer bundles Elasticsearch
+            # in its compose distribution, and Operate/Tasklist work fine on H2 for a demo.
+            type: rdbms
+            rdbms:
+              url: jdbc:h2:file:./camunda-data/h2db
+              username: sa
+              password:
+              flushInterval: PT0.5S
+              queueSize: 1000
+        system:
+          cpu-thread-count: "3"
+          io-thread-count: "3"

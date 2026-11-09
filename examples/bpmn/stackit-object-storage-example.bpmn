@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_StackitObjectStorageExample" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.42.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.10.0">
+  <bpmn:process id="stackit-object-storage-example" name="STACKIT Object Storage example" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_ProcessStarted" name="Document received">
+      <bpmn:outgoing>Flow_ToUpload</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToUpload" sourceRef="StartEvent_ProcessStarted" targetRef="ServiceTask_UploadObject" />
+    <bpmn:serviceTask id="ServiceTask_UploadObject" name="Upload to STACKIT Object Storage" zeebe:modelerTemplate="de.envite.connectors.stackit.objectstorage.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="de.envite:stackit-object-storage:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="{{secrets.STACKIT_S3_ACCESS_KEY}}" target="authentication.accessKey" />
+          <zeebe:input source="{{secrets.STACKIT_S3_SECRET_ACCESS_KEY}}" target="authentication.secretAccessKey" />
+          <zeebe:input source="EU01" target="configuration.region" />
+          <zeebe:input source="=true" target="configuration.pathStyleAccess" />
+          <zeebe:input source="uploadObject" target="operationType" />
+          <zeebe:input source="stackit-connectors-demo" target="operation.bucket" />
+          <zeebe:input source="demo/hello-from-camunda.txt" target="operation.key" />
+          <zeebe:input source="inline" target="operation.operation_document_documentSource" />
+          <zeebe:input source="Hello from Camunda 8 and STACKIT Object Storage." target="operation.operation_document_inline_content" />
+          <zeebe:input source="hello-from-camunda.txt" target="operation.operation_document_inline_fileName" />
+          <zeebe:input source="text/plain" target="operation.operation_document_inline_contentType" />
+          <zeebe:input source="=if operation.operation_document_documentSource = &#34;camunda&#34; then operation.operation_document_camundaReference else if operation.operation_document_documentSource = &#34;inline&#34; then { &#34;camunda.document.type&#34;: &#34;inline&#34;, content: operation.operation_document_inline_content, name: operation.operation_document_inline_fileName, contentType: operation.operation_document_inline_contentType } else if operation.operation_document_documentSource = &#34;external&#34; then { &#34;camunda.document.type&#34;: &#34;external&#34;, url: operation.operation_document_external_url, name: operation.operation_document_external_fileName } else null" target="operation.document" />
+          <zeebe:input source="=false" target="operation.serverSideEncryption" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="1" />
+          <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.objectstorage.v1" />
+          <zeebe:header key="retryBackoff" value="PT30S" />
+          <zeebe:header key="resultVariable" value="uploadResult" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToUpload</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="ServiceTask_UploadObject" targetRef="EndEvent_ObjectStored" />
+    <bpmn:endEvent id="EndEvent_ObjectStored" name="Object stored">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="stackit-object-storage-example">
+      <bpmndi:BPMNShape id="StartEvent_ProcessStarted_di" bpmnElement="StartEvent_ProcessStarted">
+        <dc:Bounds x="172" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="152" y="145" width="79" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_UploadObject_di" bpmnElement="ServiceTask_UploadObject">
+        <dc:Bounds x="270" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ObjectStored_di" bpmnElement="EndEvent_ObjectStored">
+        <dc:Bounds x="432" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="423" y="145" width="55" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToUpload_di" bpmnElement="Flow_ToUpload">
+        <di:waypoint x="208" y="120" />
+        <di:waypoint x="270" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="370" y="120" />
+        <di:waypoint x="432" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
