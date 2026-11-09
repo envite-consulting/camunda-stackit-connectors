@@ -1,0 +1,2 @@
+STACKIT connector core test fixture.
+Second line with umlauts: äöü.

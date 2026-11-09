@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
@@ -15,11 +13,9 @@
   <packaging>jar</packaging>
 
   <name>STACKIT Connectors for Camunda 8 :: Core</name>
-  <description>
-    Code shared by every STACKIT connector: regions and endpoint resolution, the shared
+  <description>Code shared by every STACKIT connector: regions and endpoint resolution, the shared
     element template property groups and request base model, error mapping onto the Camunda
-    connector error model, and document helpers.
-  </description>
+    connector error model, and document helpers.</description>
 
   <dependencies>
     <!-- Provided by the connector runtime; see connectors/pom.xml for the rationale. -->
@@ -62,6 +58,16 @@
     <dependency>
       <groupId>io.camunda.connector</groupId>
       <artifactId>connector-runtime-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Declared directly rather than relied on transitively through connector-runtime-test:
+      the test fixtures use io.camunda.connector.jackson.ConnectorsObjectMapperSupplier, and
+      a transitive path that deep is one dependency bump away from disappearing.
+    -->
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-object-mapper</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
