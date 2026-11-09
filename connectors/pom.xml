@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
@@ -15,10 +13,8 @@
   <packaging>pom</packaging>
 
   <name>STACKIT Connectors for Camunda 8 :: Connectors</name>
-  <description>
-    Parent for the individual STACKIT connector modules. Supplies the dependencies and the
-    build wiring (element template generation, shaded jar) that every connector needs.
-  </description>
+  <description>Parent for the individual STACKIT connector modules. Supplies the dependencies and the
+    build wiring (element template generation, shaded jar) that every connector needs.</description>
 
   <!--
     Only implemented connectors are reactor modules. The archiving/ and workflows/

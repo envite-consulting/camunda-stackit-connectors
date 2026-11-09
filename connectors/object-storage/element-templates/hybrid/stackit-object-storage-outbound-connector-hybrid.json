@@ -1,0 +1,1217 @@
+{
+  "$schema" : "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+  "name" : "Hybrid STACKIT Object Storage Outbound Connector",
+  "id" : "de.envite.connectors.stackit.objectstorage.v1-hybrid",
+  "description" : "Reads and writes objects in STACKIT Object Storage, the S3-compatible object store of the STACKIT sovereign cloud. Uploads and downloads Camunda documents, copies, deletes, lists and inspects objects, and creates presigned URLs.",
+  "keywords" : [ "STACKIT", "object storage", "S3", "bucket", "upload file", "download file", "presigned URL", "sovereign cloud", "storage", "blob", "file" ],
+  "documentationRef" : "https://github.com/envite-consulting/camunda-stackit-connectors/blob/main/connectors/object-storage/README.md",
+  "version" : 1,
+  "category" : {
+    "id" : "connectors",
+    "name" : "Connectors"
+  },
+  "appliesTo" : [ "bpmn:Task" ],
+  "elementType" : {
+    "value" : "bpmn:ServiceTask"
+  },
+  "engines" : {
+    "camunda" : "^8.10"
+  },
+  "groups" : [ {
+    "id" : "taskDefinitionType",
+    "label" : "Task definition type"
+  }, {
+    "id" : "authentication",
+    "label" : "Authentication"
+  }, {
+    "id" : "configuration",
+    "label" : "Configuration"
+  }, {
+    "id" : "operation",
+    "label" : "Operation"
+  }, {
+    "id" : "connector",
+    "label" : "Connector"
+  }, {
+    "id" : "output",
+    "label" : "Output mapping"
+  }, {
+    "id" : "error",
+    "label" : "Error handling"
+  }, {
+    "id" : "retries",
+    "label" : "Retries"
+  } ],
+  "properties" : [ {
+    "id" : "taskDefinitionType",
+    "value" : "de.envite:stackit-object-storage:1",
+    "group" : "taskDefinitionType",
+    "binding" : {
+      "property" : "type",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.accessKey",
+    "label" : "Access key ID",
+    "description" : "The access key ID of a STACKIT Object Storage credentials group. Reference a secret of the connector runtime rather than pasting the value, for example {{secrets.STACKIT_S3_ACCESS_KEY}} or =camunda.secrets.STACKIT_S3_ACCESS_KEY.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.accessKey",
+      "type" : "zeebe:input"
+    },
+    "tooltip" : "Created in the STACKIT Portal under Object Storage &gt; Credentials. Every credential of a project can read and write every bucket of that project.",
+    "type" : "String"
+  }, {
+    "id" : "authentication.secretAccessKey",
+    "label" : "Secret access key",
+    "description" : "The secret access key belonging to the access key ID. STACKIT shows it only once, at creation time, and cannot show it again — store it in a secret of the connector runtime and reference it here, for example {{secrets.STACKIT_S3_SECRET_ACCESS_KEY}} or =camunda.secrets.STACKIT_S3_SECRET_ACCESS_KEY.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.secretAccessKey",
+      "type" : "zeebe:input"
+    },
+    "tooltip" : "If the secret was lost, delete the access key in the STACKIT Portal and create a new one; it cannot be recovered.",
+    "type" : "String"
+  }, {
+    "id" : "configuration.region",
+    "label" : "Region",
+    "description" : "The STACKIT region the bucket lives in. A bucket created in eu01 is not reachable through the eu02 endpoint and there is no cross-region redirect.",
+    "optional" : false,
+    "value" : "EU01",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.region",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "eu01 (Germany)",
+      "value" : "EU01"
+    }, {
+      "name" : "eu02 (Austria)",
+      "value" : "EU02"
+    } ]
+  }, {
+    "id" : "configuration.endpoint",
+    "label" : "Custom endpoint",
+    "description" : "Optional. Replaces the regional STACKIT endpoint (https://object.storage.<region>.onstackit.cloud) with another S3-compatible endpoint, for example http://localhost:9000 for a local MinIO used in testing, or a new STACKIT region this connector version does not list yet. Leave empty for normal use.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.endpoint",
+      "type" : "zeebe:input"
+    },
+    "tooltip" : "The region is still used as the SigV4 signing region even when a custom endpoint is set.",
+    "type" : "String"
+  }, {
+    "id" : "configuration.pathStyleAccess",
+    "label" : "Use path-style access",
+    "description" : "Addresses buckets as <endpoint>/<bucket>/<key> instead of <bucket>.<endpoint>/<key>. Enabled by default: STACKIT serves both styles, but the wildcard TLS certificate covers only one host label, so a bucket name containing a dot breaks virtual-hosted-style TLS. Turn it off only if a custom endpoint requires virtual-hosted-style addressing.",
+    "optional" : true,
+    "value" : true,
+    "feel" : "static",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.pathStyleAccess",
+      "type" : "zeebe:input"
+    },
+    "type" : "Boolean"
+  }, {
+    "id" : "operationType",
+    "label" : "Operation",
+    "description" : "The STACKIT Object Storage operation this task performs.",
+    "value" : "uploadObject",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operationType",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Upload object",
+      "value" : "uploadObject"
+    }, {
+      "name" : "Download object",
+      "value" : "downloadObject"
+    }, {
+      "name" : "Delete object",
+      "value" : "deleteObject"
+    }, {
+      "name" : "Copy object",
+      "value" : "copyObject"
+    }, {
+      "name" : "List objects",
+      "value" : "listObjects"
+    }, {
+      "name" : "Get object metadata",
+      "value" : "headObject"
+    }, {
+      "name" : "Create presigned download URL",
+      "value" : "presignDownloadUrl"
+    }, {
+      "name" : "Create presigned upload URL",
+      "value" : "presignUploadUrl"
+    } ]
+  }, {
+    "id" : "uploadObjectBucket",
+    "label" : "Bucket",
+    "description" : "Name of the target bucket. Bucket names are globally unique across all STACKIT customers and must already exist — this connector does not create buckets.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectKey",
+    "label" : "Object key",
+    "description" : "The key the object is stored under, for example 2026/01/invoice.pdf. Leave empty to use the file name of the document; the upload fails if the document has no file name either.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_documentSource",
+    "label" : "Document source",
+    "description" : "The document to upload. Choose a Camunda document from a process variable, supply inline content, or point at an external URL.",
+    "value" : "camunda",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_documentSource",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Camunda Document",
+      "value" : "camunda"
+    }, {
+      "name" : "Inline Content",
+      "value" : "inline"
+    }, {
+      "name" : "From URL",
+      "value" : "external"
+    } ]
+  }, {
+    "id" : "operation_document_camundaReference",
+    "label" : "Camunda document",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "required",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_camundaReference",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "camunda",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_inline_content",
+    "label" : "Content",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_inline_content",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "inline",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_inline_fileName",
+    "label" : "File name",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_inline_fileName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "inline",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_inline_contentType",
+    "label" : "Content type",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_inline_contentType",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "inline",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_external_url",
+    "label" : "URL",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_external_url",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "external",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "operation_document_external_fileName",
+    "label" : "File name",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.operation_document_external_fileName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "operation_document_documentSource",
+        "equals" : "external",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectDocument",
+    "value" : "=if operation.operation_document_documentSource = \"camunda\" then operation.operation_document_camundaReference else if operation.operation_document_documentSource = \"inline\" then { \"camunda.document.type\": \"inline\", content: operation.operation_document_inline_content, name: operation.operation_document_inline_fileName, contentType: operation.operation_document_inline_contentType } else if operation.operation_document_documentSource = \"external\" then { \"camunda.document.type\": \"external\", url: operation.operation_document_external_url, name: operation.operation_document_external_fileName } else null",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.document",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "uploadObjectContentType",
+    "label" : "Content type",
+    "description" : "Overrides the content type of the document, for example application/pdf. Leave empty to keep the content type the document carries.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.contentType",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectMetadata",
+    "label" : "Metadata",
+    "description" : "User metadata stored with the object, as a FEEL context of string values, for example ={\"orderId\": \"4711\"}. STACKIT stores these as x-amz-meta-* headers.",
+    "optional" : true,
+    "feel" : "required",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.metadata",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectTags",
+    "label" : "Tags",
+    "description" : "Object tags, as a FEEL context of string values, for example ={\"env\": \"prod\"}. Tags are stored with the object and can be used for lifecycle rules.",
+    "optional" : true,
+    "feel" : "required",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.tags",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectServerSideEncryption",
+    "label" : "Server-side encryption",
+    "description" : "Requests SSE-S3 (AES256), where STACKIT manages the encryption key. STACKIT supports SSE-S3 and SSE-C only; there is no SSE-KMS, so no key ARN can be supplied. Leave off to store the object unencrypted at the object level.",
+    "optional" : true,
+    "value" : false,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.serverSideEncryption",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
+    "id" : "downloadObjectBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket the object is read from.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "downloadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "downloadObjectKey",
+    "label" : "Object key",
+    "description" : "Key of the object to download, for example 2026/01/invoice.pdf.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "downloadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "downloadObjectVersionId",
+    "label" : "Version ID",
+    "description" : "Downloads a specific version of the object. Leave empty for the current version; only meaningful on a bucket with versioning enabled.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "downloadObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "documentReturnFormat",
+    "label" : "Response format",
+    "description" : "How the downloaded bytes are returned. 'Document reference' uploads them to the Camunda document store and returns a reference, which is the only safe choice for large objects; text and JSON are returned inline and are limited by the maximum variable size.",
+    "value" : "DOCUMENT",
+    "group" : "operation",
+    "binding" : {
+      "name" : "documentReturnFormat.choice",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "downloadObject",
+      "type" : "simple"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Document reference",
+      "value" : "DOCUMENT"
+    }, {
+      "name" : "as text",
+      "value" : "TEXT"
+    }, {
+      "name" : "as JSON",
+      "value" : "JSON"
+    } ]
+  }, {
+    "id" : "documentReturnFormatEncoding",
+    "label" : "Encoding",
+    "description" : "Character set used to decode the response. Default UTF-8.",
+    "value" : "UTF-8",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "documentReturnFormat.encoding",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "documentReturnFormat",
+        "equals" : "TEXT",
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "downloadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteObjectBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket the object is deleted from.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteObjectKey",
+    "label" : "Object key",
+    "description" : "Key of the object to delete.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteObjectVersionId",
+    "label" : "Version ID",
+    "description" : "Permanently deletes one specific version instead of writing a delete marker. Leave empty for the usual delete.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "copyObjectSourceBucket",
+    "label" : "Source bucket",
+    "description" : "Name of the bucket the object is copied from.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.sourceBucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "copyObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "copyObjectSourceKey",
+    "label" : "Source key",
+    "description" : "Key of the object to copy.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.sourceKey",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "copyObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "copyObjectSourceVersionId",
+    "label" : "Source version ID",
+    "description" : "Copies one specific version of the source object. Leave empty for the current version.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.sourceVersionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "copyObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "copyObjectDestinationBucket",
+    "label" : "Destination bucket",
+    "description" : "Name of the bucket the copy is written to. May be the same as the source bucket.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.destinationBucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "copyObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "copyObjectDestinationKey",
+    "label" : "Destination key",
+    "description" : "Key the copy is written to.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.destinationKey",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "copyObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listObjectsBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket to list.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listObjects",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listObjectsPrefix",
+    "label" : "Prefix",
+    "description" : "Returns only keys that start with this prefix, for example 2026/01/. Leave empty to list the whole bucket.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.prefix",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listObjects",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listObjectsDelimiter",
+    "label" : "Delimiter",
+    "description" : "Collapses every key that shares a prefix up to this character into a single entry of commonPrefixes, which is how a folder listing is emulated. Use / for folder-like behaviour.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.delimiter",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listObjects",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listObjectsMaxKeys",
+    "label" : "Max keys",
+    "description" : "Maximum number of keys returned in one page, between 1 and 1000. STACKIT caps a page at 1000 keys regardless of a higher value.",
+    "optional" : true,
+    "value" : 1000,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.maxKeys",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listObjects",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "listObjectsContinuationToken",
+    "label" : "Continuation token",
+    "description" : "Continues a previous listing. Pass the nextContinuationToken of the previous result here, and loop while truncated is true.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.continuationToken",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listObjects",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "headObjectBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket the object is looked up in.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "headObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "headObjectKey",
+    "label" : "Object key",
+    "description" : "Key of the object whose metadata is read.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "headObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "headObjectVersionId",
+    "label" : "Version ID",
+    "description" : "Reads the metadata of one specific version. Leave empty for the current version.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "headObject",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignDownloadUrlBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket the object lives in.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignDownloadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignDownloadUrlKey",
+    "label" : "Object key",
+    "description" : "Key of the object the URL downloads.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignDownloadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignDownloadUrlVersionId",
+    "label" : "Version ID",
+    "description" : "Signs a URL for one specific version. Leave empty for the current version.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignDownloadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignDownloadUrlExpiration",
+    "label" : "Expiration",
+    "description" : "How long the URL stays valid, as an ISO-8601 duration: PT15M, PT1H, P1D. Must be positive and at most 7 days — that ceiling comes from the AWS SigV4 protocol, not from STACKIT, which documents no maximum of its own.",
+    "optional" : true,
+    "value" : "PT1H",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.expiration",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignDownloadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignUploadUrlBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket the upload is written to.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignUploadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignUploadUrlKey",
+    "label" : "Object key",
+    "description" : "Key the uploaded object is stored under.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignUploadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignUploadUrlContentType",
+    "label" : "Content type",
+    "description" : "Content type signed into the URL, for example application/pdf. Whoever uses the URL must send exactly this Content-Type header, or the signature will not match. Leave empty to let the uploader choose.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.contentType",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignUploadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "presignUploadUrlExpiration",
+    "label" : "Expiration",
+    "description" : "How long the URL stays valid, as an ISO-8601 duration: PT15M, PT1H, P1D. Must be positive and at most 7 days — that ceiling comes from the AWS SigV4 protocol, not from STACKIT, which documents no maximum of its own.",
+    "optional" : true,
+    "value" : "PT1H",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.expiration",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "presignUploadUrl",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "version",
+    "label" : "Version",
+    "description" : "Version of the element template",
+    "value" : "1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateVersion",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "id",
+    "label" : "ID",
+    "description" : "ID of the element template",
+    "value" : "de.envite.connectors.stackit.objectstorage.v1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateId",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "resultVariable",
+    "label" : "Result variable",
+    "description" : "Name of variable to store the response in. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-variable\" target=\"_blank\">documentation</a>.",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultVariable",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "resultExpression",
+    "label" : "Result expression",
+    "description" : "Expression to map the response into process variables. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-expression\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "errorExpression",
+    "label" : "Error expression",
+    "description" : "Expression to handle errors. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "error",
+    "binding" : {
+      "key" : "errorExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "retryCount",
+    "label" : "Retries",
+    "description" : "Number of retries",
+    "value" : "3",
+    "feel" : "optional",
+    "group" : "retries",
+    "binding" : {
+      "property" : "retries",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "retryBackoff",
+    "label" : "Retry backoff",
+    "description" : "ISO-8601 duration to wait between retries",
+    "value" : "PT30S",
+    "group" : "retries",
+    "binding" : {
+      "key" : "retryBackoff",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "jobTimeout",
+    "label" : "Job timeout",
+    "description" : "ISO-8601 duration after which Zeebe considers this job timed out if not yet completed. Leave empty to use the default timeout",
+    "optional" : true,
+    "group" : "retries",
+    "binding" : {
+      "key" : "jobTimeout",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  } ],
+  "steps" : [ {
+    "name" : "Upload object",
+    "description" : "Uploads a document to a bucket (PutObject). Streams the document, so objects up to the STACKIT limit of 5 TB are supported.",
+    "keywords" : [ "upload", "put", "store", "write", "putObject", "upload file", "save file" ],
+    "presetId" : "operationType_uploadObject"
+  }, {
+    "name" : "Download object",
+    "description" : "Downloads an object (GetObject) and returns it as a Camunda document, as text, or as parsed JSON.",
+    "keywords" : [ "download", "get", "read", "fetch", "getObject", "download file", "read file" ],
+    "presetId" : "operationType_downloadObject"
+  }, {
+    "name" : "Delete object",
+    "description" : "Deletes an object (DeleteObject). Succeeds even if the key does not exist, because S3 delete is idempotent.",
+    "keywords" : [ "delete", "remove", "erase", "deleteObject", "delete file" ],
+    "presetId" : "operationType_deleteObject"
+  }, {
+    "name" : "Copy object",
+    "description" : "Copies an object server-side (CopyObject). The bytes stay inside STACKIT and never pass through the connector runtime.",
+    "keywords" : [ "copy", "duplicate", "move", "copyObject", "copy file" ],
+    "presetId" : "operationType_copyObject"
+  }, {
+    "name" : "List objects",
+    "description" : "Lists one page of objects in a bucket (ListObjectsV2). Returns a continuation token the process can loop on; the connector does not paginate by itself.",
+    "keywords" : [ "list", "listObjects", "browse", "enumerate", "ls", "list files" ],
+    "presetId" : "operationType_listObjects"
+  }, {
+    "name" : "Get object metadata",
+    "description" : "Reads an object's metadata without downloading it (HeadObject). Returns exists: false instead of failing when the key is absent.",
+    "keywords" : [ "head", "exists", "metadata", "stat", "headObject", "check file", "file exists" ],
+    "presetId" : "operationType_headObject"
+  }, {
+    "name" : "Create presigned download URL",
+    "description" : "Creates a time-limited URL that downloads an object without credentials. Computed locally, so nothing is sent to STACKIT and the object need not exist yet.",
+    "keywords" : [ "presign", "presigned", "signed url", "share", "download link", "temporary url", "getObject" ],
+    "presetId" : "operationType_presignDownloadUrl"
+  }, {
+    "name" : "Create presigned upload URL",
+    "description" : "Creates a time-limited URL that uploads an object with HTTP PUT and no credentials. Computed locally, so nothing is sent to STACKIT.",
+    "keywords" : [ "presign", "presigned", "signed url", "upload link", "temporary url", "putObject", "direct upload" ],
+    "presetId" : "operationType_presignUploadUrl"
+  } ],
+  "presets" : [ {
+    "id" : "operationType_uploadObject",
+    "properties" : {
+      "operationType" : "uploadObject"
+    }
+  }, {
+    "id" : "operationType_downloadObject",
+    "properties" : {
+      "operationType" : "downloadObject"
+    }
+  }, {
+    "id" : "operationType_deleteObject",
+    "properties" : {
+      "operationType" : "deleteObject"
+    }
+  }, {
+    "id" : "operationType_copyObject",
+    "properties" : {
+      "operationType" : "copyObject"
+    }
+  }, {
+    "id" : "operationType_listObjects",
+    "properties" : {
+      "operationType" : "listObjects"
+    }
+  }, {
+    "id" : "operationType_headObject",
+    "properties" : {
+      "operationType" : "headObject"
+    }
+  }, {
+    "id" : "operationType_presignDownloadUrl",
+    "properties" : {
+      "operationType" : "presignDownloadUrl"
+    }
+  }, {
+    "id" : "operationType_presignUploadUrl",
+    "properties" : {
+      "operationType" : "presignUploadUrl"
+    }
+  } ],
+  "icon" : {
+    "contents" : "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K"
+  }
+}

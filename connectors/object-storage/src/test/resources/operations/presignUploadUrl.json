@@ -1,0 +1,18 @@
+{
+  "authentication": {
+    "accessKey": "{{secrets.STACKIT_S3_ACCESS_KEY}}",
+    "secretAccessKey": "{{secrets.STACKIT_S3_SECRET_ACCESS_KEY}}"
+  },
+  "configuration": {
+    "region": "EU01",
+    "endpoint": "http://localhost:9000",
+    "pathStyleAccess": false
+  },
+  "operationType": "presignUploadUrl",
+  "operation": {
+    "bucket": "stackit-invoices",
+    "key": "2026/01/invoice.pdf",
+    "contentType": "application/pdf",
+    "expiration": "PT15M"
+  }
+}

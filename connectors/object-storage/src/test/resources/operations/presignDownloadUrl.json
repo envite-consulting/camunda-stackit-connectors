@@ -1,0 +1,17 @@
+{
+  "authentication": {
+    "accessKey": "{{secrets.STACKIT_S3_ACCESS_KEY}}",
+    "secretAccessKey": "{{secrets.STACKIT_S3_SECRET_ACCESS_KEY}}"
+  },
+  "configuration": {
+    "region": "EU01",
+    "pathStyleAccess": true
+  },
+  "operationType": "presignDownloadUrl",
+  "operation": {
+    "bucket": "stackit-invoices",
+    "key": "2026/01/invoice.pdf",
+    "versionId": "v7",
+    "expiration": "PT30M"
+  }
+}

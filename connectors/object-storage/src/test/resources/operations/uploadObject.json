@@ -1,0 +1,34 @@
+{
+  "authentication": {
+    "accessKey": "{{secrets.STACKIT_S3_ACCESS_KEY}}",
+    "secretAccessKey": "{{secrets.STACKIT_S3_SECRET_ACCESS_KEY}}"
+  },
+  "configuration": {
+    "region": "EU01",
+    "endpoint": null,
+    "pathStyleAccess": true
+  },
+  "operationType": "uploadObject",
+  "operation": {
+    "operation_document_documentSource": "inline",
+    "operation_document_inline_content": "hello",
+    "operation_document_inline_fileName": "greeting.txt",
+    "operation_document_inline_contentType": "text/plain",
+    "bucket": "stackit-invoices",
+    "key": "2026/01/invoice.pdf",
+    "document": {
+      "camunda.document.type": "inline",
+      "content": "hello",
+      "name": "greeting.txt",
+      "contentType": "text/plain"
+    },
+    "contentType": "application/pdf",
+    "metadata": {
+      "orderId": "4711"
+    },
+    "tags": {
+      "env": "prod"
+    },
+    "serverSideEncryption": true
+  }
+}

@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
@@ -15,17 +13,13 @@
   <packaging>jar</packaging>
 
   <name>STACKIT Connectors for Camunda 8 :: Object Storage</name>
-  <description>
-    Camunda 8 outbound connector for STACKIT Object Storage, the S3-compatible object store
-    of the STACKIT cloud.
-  </description>
+  <description>Camunda 8 outbound connector for STACKIT Object Storage, the S3-compatible object store
+    of the STACKIT cloud.</description>
 
   <properties>
     <element.template.id>de.envite.connectors.stackit.objectstorage.v1</element.template.id>
     <element.template.file>stackit-object-storage-outbound-connector.json</element.template.file>
-    <connector.class>
-      de.envite.camunda.stackit.objectstorage.StackitObjectStorageConnectorFunction
-    </connector.class>
+    <connector.class>de.envite.camunda.stackit.objectstorage.StackitObjectStorageConnectorFunction</connector.class>
   </properties>
 
   <dependencies>

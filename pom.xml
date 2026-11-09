@@ -256,6 +256,20 @@
         <version>${version.slf4j}</version>
       </dependency>
 
+      <!--
+        Imported BEFORE the Spring Boot BOM: in dependencyManagement the first declaration
+        wins, and Spring Boot manages org.testcontainers:testcontainers but not its module
+        artifacts. Letting Spring Boot win left the core at 2.0.5 while junit-jupiter stayed
+        on 1.21.4 - two different majors of the same library on one test classpath.
+      -->
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${version.testcontainers}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
       <!-- ===== Spring Boot (bundle runtime only) ===== -->
       <dependency>
         <groupId>org.springframework.boot</groupId>
@@ -284,13 +298,6 @@
         <groupId>org.assertj</groupId>
         <artifactId>assertj-bom</artifactId>
         <version>${version.assertj}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.testcontainers</groupId>
-        <artifactId>testcontainers-bom</artifactId>
-        <version>${version.testcontainers}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -663,6 +670,16 @@
             </configuration>
           </execution>
         </executions>
+      </plugin>
+
+      <!--
+        Bound here, not only managed: declaring failsafe in pluginManagement alone meant
+        `mvn verify` silently ran no integration tests at all. Modules without *IT classes
+        simply have nothing to execute.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
       </plugin>
 
       <plugin>
