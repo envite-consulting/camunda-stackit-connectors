@@ -1,0 +1,12 @@
+# Code owners for camunda-stackit-connectors.
+#
+# NOTE: @envite-consulting/camunda must exist as a team in the
+# envite-consulting organisation and must have write access to this
+# repository, otherwise GitHub silently ignores this file and no reviewer is
+# requested. Adjust the slug (or replace it with individual @usernames) if the
+# team is named differently.
+#
+# This file lives at the repository root; .github/CODEOWNERS and
+# docs/CODEOWNERS would work too, but only one of the three is ever read.
+
+* @envite-consulting/camunda

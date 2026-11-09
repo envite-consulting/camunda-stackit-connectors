@@ -1,0 +1,90 @@
+name: Feature request
+description: Propose a new connector, a new operation, or a change to an existing one.
+title: '[feat]: '
+labels: ['enhancement', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the proposal. Please describe the process-automation problem
+        you are trying to solve, not only the API call you would like wrapped —
+        that is what decides how the element template should be shaped.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New operation on an existing connector
+        - New STACKIT connector (new service)
+        - Change to an existing operation or element template property
+        - Documentation or examples
+        - Build / tooling
+    validations:
+      required: true
+
+  - type: input
+    id: stackit-service
+    attributes:
+      label: STACKIT service
+      description: Which STACKIT service should this cover?
+      placeholder: 'Object Storage / Secrets Manager / SQLServer Flex / ...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and what is the workaround you are using instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What should the connector do? If you know the relevant STACKIT API
+        endpoint or SDK call, link it. Sketch the element template properties
+        (inputs and outputs) you would expect in Modeler.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connector-type
+    attributes:
+      label: Connector type
+      description: Outbound connectors are job workers; inbound connectors subscribe and start/continue processes.
+      options:
+        - Outbound (the process calls STACKIT)
+        - Inbound (STACKIT triggers the process)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        For example the generic REST connector, a custom job worker, or a script
+        task — and why they are not sufficient.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this.
+          required: false

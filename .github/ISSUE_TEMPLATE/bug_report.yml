@@ -1,0 +1,137 @@
+name: Bug report
+description: Something in a STACKIT connector does not work as documented.
+title: '[bug]: '
+labels: ['bug', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        **Please do not paste credentials.** STACKIT service account keys, access
+        keys, secret keys and bearer tokens must be redacted from every log
+        snippet, stack trace and configuration block below.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I removed all credentials and secrets from the details below.
+          required: true
+
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector
+      description: Which connector is affected?
+      options:
+        - Object Storage (outbound)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: connector-version
+    attributes:
+      label: Connector version
+      description: >-
+        The version of the `de.envite.camunda.stackit` artifact, or the version
+        shown in the element template (`version` / the template name in Modeler).
+      placeholder: '0.1.0'
+    validations:
+      required: true
+
+  - type: input
+    id: camunda-version
+    attributes:
+      label: Camunda version
+      description: The Camunda 8 version you are running (orchestration cluster / runtime).
+      placeholder: '8.10.9'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment-type
+    attributes:
+      label: Deployment type
+      description: How is the connector runtime being executed?
+      options:
+        - SaaS with hybrid mode (self-hosted connector runtime, SaaS cluster)
+        - Self-Managed (Helm / Docker Compose / bare runtime)
+        - Camunda 8 Run (local development distribution)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: runtime-details
+    attributes:
+      label: Runtime details
+      description: >-
+        How the connector is mounted: `camunda/connectors-bundle` image tag, a
+        `*-with-dependencies.jar` on the classpath, or a custom Spring Boot
+        application.
+      placeholder: 'camunda/connectors-bundle:8.10.9 with stackit-connector-object-storage-0.1.0-with-dependencies.jar in /opt/app'
+    validations:
+      required: false
+
+  - type: dropdown
+    id: region
+    attributes:
+      label: STACKIT region
+      description: The STACKIT region the connector talks to.
+      options:
+        - eu01
+        - eu02
+        - Other (please state in "Additional context")
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        Ideally the relevant part of the BPMN task configuration (the
+        `zeebe:taskDefinition` / `zeebe:ioMapping` extension elements) and the
+        FEEL expressions used.
+      placeholder: |
+        1. Model a Service Task using the "STACKIT Object Storage" template
+        2. Set operation to "Upload object", bucket to ...
+        3. Deploy and start the process
+        4. Incident is raised
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-message
+    attributes:
+      label: Full connector error / incident message
+      description: >-
+        The complete incident message from Operate, plus the connector runtime
+        log around the failure (including the stack trace and any `errorCode` /
+        `errorMessage` from the connector). Credentials redacted.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: >-
+        Anything else that matters: proxy/egress setup, bucket policies, custom
+        endpoint overrides, JDK version, other region names.
+    validations:
+      required: false

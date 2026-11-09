@@ -1,0 +1,14 @@
+{
+  "name": "@envite/stackit-connectors-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Build tooling for camunda-stackit-connectors (element template validation).",
+  "license": "Apache-2.0",
+  "scripts": {
+    "validate:templates": "node validate-element-templates.mjs"
+  },
+  "dependencies": {
+    "@bpmn-io/element-templates-validator": "^2.26.0"
+  }
+}

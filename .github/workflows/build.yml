@@ -1,0 +1,263 @@
+# Pull request gate for camunda-stackit-connectors.
+#
+# Build facts this workflow is built around:
+#   * Java 21 and Maven 3.10.0 are mandatory. Maven is pinned by the committed
+#     Maven Wrapper (distributionType=only-script), so every Maven invocation
+#     here goes through ./mvnw - never a runner-provided `mvn`. Accordingly,
+#     actions/setup-java is used for the JDK and the ~/.m2 cache only.
+#   * A normal local build auto-applies Spotless and the license headers via the
+#     `autoFormat` profile, which is active by default. CI must never fix, only
+#     check, so every Maven call disables it with -P'!autoFormat'.
+#   * Element templates are generated build output. They are committed, so CI
+#     re-generates them and proves the working tree is unchanged.
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege by default; jobs that need more raise it locally.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required by the JUnit reporter to attach annotations to the run.
+      checks: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # `verify` runs surefire (unit tests) and failsafe (the @Tag("integration")
+      # Testcontainers tests). GitHub-hosted Ubuntu runners ship a running Docker
+      # daemon, so Testcontainers works without extra setup.
+      - name: Build and run all tests
+        run: ./mvnw -B -P'!autoFormat' verify
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Reporting must never be the reason a build goes red: `require_tests` and
+      # `fail_on_failure` stay off (the Maven step already failed the job if a
+      # test failed) and the step is continue-on-error so a missing report
+      # directory, or a read-only token on a fork PR, cannot fail the job.
+      - name: Publish test summary
+        if: always()
+        continue-on-error: true
+        uses: mikepenz/action-junit-report@v6
+        with:
+          report_paths: '**/target/*-reports/TEST-*.xml'
+          check_name: Test results
+          annotate_only: true
+          detailed_summary: true
+          include_passed: false
+          require_tests: false
+          fail_on_failure: false
+
+  format:
+    name: Formatting and license headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # `!autoFormat` switches off the auto-applying profile, `checkFormat`
+      # turns spotless:check and license:check on. Without the former the build
+      # would quietly reformat and then pass.
+      - name: Check Spotless formatting and license headers
+        id: check
+        run: ./mvnw -B -P'!autoFormat' -PcheckFormat validate
+
+      - name: Explain how to fix formatting
+        if: failure() && steps.check.outcome == 'failure'
+        run: |
+          echo "::error title=Formatting or license headers are off::Run './mvnw spotless:apply license:format' locally and commit the result. A plain './mvnw verify' also fixes both automatically, because the autoFormat profile is active by default."
+          exit 1
+
+  element-templates:
+    name: Element templates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # element-template-generator-maven-plugin is bound to process-classes, so
+      # this regenerates every template without running tests or packaging.
+      - name: Regenerate element templates
+        run: ./mvnw -B -P'!autoFormat' -DskipTests process-classes
+
+      # `git add -N` is what makes *newly created* templates show up in
+      # `git diff` as content rather than as an untracked file; nothing is
+      # actually staged for commit. `versioned/` is excluded on purpose: those
+      # snapshots are pinned to a released template version and are not
+      # overwritten on regeneration.
+      - name: Check committed templates match their Java source
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATHSPEC=(
+            '*/element-templates/*.json'
+            '*/element-templates/hybrid/*.json'
+            '*/*/element-templates/*.json'
+            '*/*/element-templates/hybrid/*.json'
+            ':(exclude)*/element-templates/versioned/*'
+            ':(exclude)*/*/element-templates/versioned/*'
+          )
+          # Guard: `git add -N` aborts with a bare "fatal: pathspec ... did not
+          # match any files" when *none* of the pathspecs match anything at all,
+          # which would mask the real problem. `git ls-files` tolerates
+          # unmatched pathspecs, so it is safe to probe with. (A pathspec set
+          # where only *some* entries match is fine for `git add -N`.)
+          if [ -z "$(git ls-files --cached --others --exclude-standard -- "${PATHSPEC[@]}")" ]; then
+            echo "::error::No element templates found after 'process-classes'. Expected generated templates under <module>/element-templates/. Check the @ElementTemplate annotations and the element-template-generator-maven-plugin binding."
+            exit 1
+          fi
+          git add -N -- "${PATHSPEC[@]}"
+          if git diff --quiet -- "${PATHSPEC[@]}"; then
+            echo "::notice::Element templates match their Java source."
+          else
+            echo "::error::Element templates are out of sync with their Java source. Run './mvnw -DskipTests process-classes' and commit the regenerated templates."
+            git diff --stat -- "${PATHSPEC[@]}"
+            git diff -- "${PATHSPEC[@]}"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      - name: Install validator dependencies
+        run: npm ci --prefix tools
+
+      # Validates every committed template (including hybrid/ and versioned/)
+      # against the official Camunda 8 / Zeebe element-template JSON schema.
+      # Equivalent to `npm run --prefix tools validate:templates`.
+      - name: Validate templates against the Zeebe JSON schema
+        run: node tools/validate-element-templates.mjs
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # build-mode: none uses CodeQL's buildless Java extractor, so the Maven
+      # build is not duplicated here. Requires that CodeQL "default setup" is
+      # disabled for this repository, otherwise GitHub rejects this workflow's
+      # uploads as a conflicting configuration.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:java-kotlin
+
+  dependency-review:
+    name: Dependency review
+    # Only meaningful on a pull request: the action diffs the dependency graph
+    # of the base ref against the head ref.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # This project is Apache-2.0 and is redistributed as a shaded
+      # *-with-dependencies.jar, i.e. dependencies are statically linked. Strong
+      # copyleft (GPL/AGPL/SSPL/OSL/EUPL) is therefore incompatible outright,
+      # and weak copyleft (LGPL) is incompatible in practice once shaded. Both
+      # the current and the deprecated SPDX spellings are listed because the
+      # dependency graph reports either, depending on the ecosystem.
+      #
+      # Pinned to the exact tag v5.0.0: unlike most first-party actions,
+      # actions/dependency-review-action publishes no floating `v4`/`v5` major
+      # tag (only v1-v3 exist), so a major-tag pin is not available here.
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: high
+          deny-licenses: >-
+            GPL-1.0-or-later,
+            GPL-2.0-only,
+            GPL-2.0-or-later,
+            GPL-3.0-only,
+            GPL-3.0-or-later,
+            AGPL-1.0-only,
+            AGPL-1.0-or-later,
+            AGPL-3.0-only,
+            AGPL-3.0-or-later,
+            LGPL-2.0-only,
+            LGPL-2.0-or-later,
+            LGPL-2.1-only,
+            LGPL-2.1-or-later,
+            LGPL-3.0-only,
+            LGPL-3.0-or-later,
+            SSPL-1.0,
+            OSL-3.0,
+            EUPL-1.1,
+            EUPL-1.2,
+            CPAL-1.0,
+            QPL-1.0

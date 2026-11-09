@@ -39,6 +39,16 @@
       <artifactId>jakarta.validation-api</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!--
+      jackson-core must be declared explicitly even though jackson-databind depends on it:
+      `provided` scope is not transitive, so databind's own dependencies never reach the
+      compile classpath. The connector runtime supplies all three at runtime.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>

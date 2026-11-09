@@ -1,0 +1,205 @@
+# Manual release of camunda-stackit-connectors to Maven Central via the
+# Sonatype Central Portal.
+#
+# REQUIRED REPOSITORY SECRETS - NONE OF THESE ARE CONFIGURED YET. The workflow
+# will fail until an organisation owner adds them under
+# Settings > Secrets and variables > Actions:
+#
+#   MAVEN_CENTRAL_USERNAME  Central Portal user token *name*  (NOT the Sonatype
+#                           account name - generate a token at
+#                           https://central.sonatype.com/account)
+#   MAVEN_CENTRAL_PASSWORD  Central Portal user token *secret*
+#   GPG_PRIVATE_KEY         ASCII-armored private key block, exported with
+#                           `gpg --armor --export-secret-keys <KEYID>`. Its
+#                           public half must be published to a keyserver that
+#                           Central checks (keys.openpgp.org / keyserver.ubuntu.com).
+#   GPG_PASSPHRASE          Passphrase of that key.
+#
+# No credential values are hard-coded anywhere in this file, and the Maven
+# settings.xml is produced by actions/setup-java (server-id / *-env-var inputs)
+# rather than written by hand.
+#
+# The root pom's `release` profile wires maven-source-plugin,
+# maven-javadoc-plugin, maven-gpg-plugin and
+# org.sonatype.central:central-publishing-maven-plugin with
+# publishingServerId=central and autoPublish=false, so the deployment is
+# uploaded to the Portal and then *waits* for a human to press "Publish".
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without -SNAPSHOT, e.g. 0.1.0'
+        required: true
+        type: string
+      draft_release:
+        description: >-
+          Create the GitHub Release as a draft. Default true, to match
+          autoPublish=false on the Central Portal: both the Maven Central
+          deployment and the GitHub Release are then published by hand once the
+          staged deployment has been validated.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a release in flight.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to create the GitHub Release and its tag.
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Generates ~/.m2/settings.xml with a <server> for the `central` id that
+      # resolves its credentials from the env vars named below, imports the GPG
+      # key into an isolated keyring, and configures gpg.passphraseEnvName so
+      # maven-gpg-plugin reads the passphrase from $GPG_PASSPHRASE.
+      - name: Set up JDK 21 and Maven Central credentials
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          # Must match <publishingServerId>central</publishingServerId>.
+          server-id: central
+          server-username-env-var: MAVEN_CENTRAL_USERNAME
+          server-password-env-var: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase-env-var: GPG_PASSPHRASE
+
+      - name: Validate version input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9.]*)?$ ]]; then
+            echo "::error::'$RELEASE_VERSION' is not a release version. Expected e.g. 0.1.0 or 1.2.0-rc1, and never a -SNAPSHOT."
+            exit 1
+          fi
+
+      # versions-maven-plugin is already in pluginManagement, so no version
+      # needs to be given here. The bumped poms are deliberately NOT committed
+      # or pushed by this workflow - merge the version bump first, or accept
+      # that the created tag points at the dispatched commit.
+      - name: Set the release version across the reactor
+        run: ./mvnw -B versions:set -DnewVersion="$RELEASE_VERSION" -DgenerateBackupPoms=false
+
+      # Full verify, including the Testcontainers integration tests: nothing
+      # ships to Central that has not been through the same gate as a PR.
+      - name: Build and verify
+        run: ./mvnw -B -P'!autoFormat' verify
+
+      # -Prelease adds sources, javadoc, GPG signatures and the Central
+      # publishing extension. autoPublish=false means `deploy` only uploads the
+      # deployment to the Portal; publishing stays a manual action at
+      # https://central.sonatype.com/publishing/deployments.
+      - name: Publish to the Sonatype Central Portal
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./mvnw -B -P'!autoFormat' -Prelease -DskipTests deploy
+
+      # Self-Managed and Camunda 8 Run users install element templates by
+      # dropping the raw JSON into their Modeler resources directory, and the
+      # Camunda Marketplace only ever serves the latest version - so every
+      # release must carry its own downloadable copies.
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/element-templates
+
+          # Each template is flattened from
+          # `connectors/object-storage/element-templates/hybrid/x.json` to
+          # `connectors__object-storage__hybrid__x.json`, so that templates from
+          # different modules cannot collide as release assets. `release-assets`
+          # is pruned from the search as well, otherwise `find` would stream back
+          # the copies this very loop creates.
+          template_count=0
+          while IFS= read -r -d '' template; do
+            flat="${template#./}"
+            flat="${flat//\/element-templates\//__}"
+            flat="${flat//\//__}"
+            cp "$template" "release-assets/element-templates/$flat"
+            template_count=$((template_count + 1))
+          done < <(find . -type d \( -name target -o -name release-assets -o -name node_modules -o -name .git \) -prune \
+            -o -type f -path '*/element-templates/*' -name '*.json' -print0)
+
+          if [[ "$template_count" -eq 0 ]]; then
+            echo "::error::No element templates found to attach to the release."
+            exit 1
+          fi
+          echo "Collected $template_count element template(s)."
+
+          ( cd release-assets && zip -q -r "element-templates-$RELEASE_VERSION.zip" element-templates )
+
+          jar_count=0
+          while IFS= read -r -d '' jar; do
+            cp "$jar" release-assets/
+            jar_count=$((jar_count + 1))
+          done < <(find . -type f -path '*/target/*-with-dependencies.jar' -print0)
+
+          if [[ "$jar_count" -eq 0 ]]; then
+            echo "::error::No *-with-dependencies.jar was produced. Expected one from bundle/ (spring-boot repackage) and one per connector module (maven-shade-plugin)."
+            exit 1
+          fi
+          echo "Collected $jar_count shaded jar(s)."
+
+          ls -la release-assets release-assets/element-templates
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          draft: ${{ inputs.draft_release }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.jar
+            release-assets/*.zip
+            release-assets/element-templates/*.json
+          body: |
+            ## Maven Central
+
+            ```xml
+            <dependency>
+              <groupId>de.envite.camunda.stackit</groupId>
+              <artifactId>stackit-connector-object-storage</artifactId>
+              <version>${{ inputs.version }}</version>
+            </dependency>
+            ```
+
+            ## Element templates
+
+            Camunda 8 SaaS users can install the connectors from the Camunda
+            Marketplace. Self-Managed and Camunda 8 Run users should download
+            the element template JSON files attached below (or
+            `element-templates-${{ inputs.version }}.zip`) and place them in
+            their Modeler `resources/element-templates` directory. The
+            Marketplace only ever serves the latest version, so these assets are
+            the only way to pin an older template.
+
+            The `*-with-dependencies.jar` assets are the shaded runtime jars to
+            mount into `camunda/connectors-bundle`.
+
+      - name: Remind about the manual publish step
+        if: success()
+        run: |
+          echo "::notice title=Deployment staged::autoPublish=false - open https://central.sonatype.com/publishing/deployments and publish the staged deployment, then un-draft the GitHub Release if it was created as a draft."
