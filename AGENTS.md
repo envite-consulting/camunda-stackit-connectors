@@ -21,8 +21,9 @@ connectors/
 bundle/                        stackit-connectors-bundle    runnable Connector Runtime
 docs/                          cross-cutting technical docs
 examples/                      docker-compose + example BPMN
-tools/                         element template schema validation (Node)
+tools/                         element template schema validation (Node), live test runner
 build/                         license header template
+.secrets/                      gitignored: live test credentials, never committed
 ```
 
 `archiving/` and `workflows/` deliberately contain only a `README.md` design document. They
@@ -84,7 +85,8 @@ the connector.
 
 ### 3. The AWS SDK checksum settings on every S3 client
 
-Every `S3Client` and `S3Presigner` that talks to STACKIT Object Storage **must** set:
+Every `S3Client` (and any future `S3AsyncClient`) that talks to STACKIT Object Storage
+**must** set:
 
 ```java
 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
@@ -97,7 +99,9 @@ STACKIT Object Storage is NetApp StorageGRID. StorageGRID 11.9 (region `eu01`) a
 defaults to sending a CRC32 `aws-chunked` trailer. This breaks multipart uploads outright
 and risks silently writing the chunk framing into the object body. There is a regression
 test asserting those headers are absent — if you ever see it fail, do not "fix" it by
-relaxing the assertion. Full analysis and sources:
+relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
+checksum parameters; `ChecksumHeaderRegressionTest$PresignedUpload` pins that, so re-check it
+on SDK upgrades. Full analysis and sources:
 [`docs/stackit-object-storage-compatibility.md`](docs/stackit-object-storage-compatibility.md).
 
 ### 4. Credentials never reach a log or an incident message
@@ -107,11 +111,19 @@ Error messages name the bucket, key or endpoint — never the key material. The 
 Marketplace security guidelines also require that a connector must not collect or store
 credentials outside the customer's cluster.
 
-### 5. Shaded jars need `ServicesResourceTransformer`
+### 5. Shaded jars need `ServicesResourceTransformer` — and must not carry the runtime's libraries
 
 It is configured in the root pom's `pluginManagement`. Without it the merged jar loses its
 `META-INF/services` entry and the runtime never discovers the connector. Do not simplify the
 shade configuration.
+
+The shaded jar is mounted next to Camunda's runtime on one flat classpath, so every class it
+duplicates can shadow the runtime's copy, or be shadowed by it. Anything the runtime already
+provides — the Connector SDK, `connector-object-mapper`, Jackson, SLF4J — is `provided` or
+`test` scope, never `compile`. Libraries the runtime also ships for other reasons are excluded
+when the connector does not need them: the AWS SDK's Netty-based async client is excluded,
+because Netty is what the runtime's gRPC client runs on. Before adding a compile dependency,
+check what it puts into `*-with-dependencies.jar` (`unzip -l`).
 
 ## Architecture decisions
 
@@ -190,11 +202,30 @@ mapping and derives a name from the template's `name` instead.
 
 ## Testing
 
-- Unit tests run under surefire on `mvn test` and must need neither network nor Docker.
-- Integration tests are annotated `@Tag("integration")`, run under failsafe on `mvn verify`,
-  and may use Testcontainers.
-- Mock the `S3Client` for behaviour tests; use a real S3 implementation in Docker only for
-  round-trip tests.
+Three tiers, selected by JUnit tag:
+
+| Tier | Tag | Runs on | Talks to |
+| --- | --- | --- | --- |
+| Unit | none | `mvn test` (surefire) | nothing — no network, no Docker |
+| Integration | `integration` | `mvn verify` (failsafe), CI | [Floci](https://floci.io) in a container |
+| Live | `live` | `tools/live-tests.sh` (`-Pstackit-live`) only | a real STACKIT project |
+
+- Mock the `S3Client` for behaviour tests; use Floci only for round-trip tests. Floci is an
+  emulator, not StorageGRID: anything that depends on how STACKIT really behaves belongs in a
+  live test.
+- Drive the connector in integration and live tests through `support/ConnectorHarness`, which
+  sends engine-shaped job variables through the real connector function. Read results back
+  with a separate client rather than trusting the connector's own report.
+- Live tests never run in CI or in a plain `mvn verify`. They read credentials from the
+  environment (`tools/live-tests.sh` loads the gitignored `.secrets/live-test.env`), skip
+  themselves via `Assumptions` when unconfigured, write only below a per-run key prefix and
+  delete everything they wrote. Never print a credential, a token, or a presigned URL (it
+  contains the access key ID) from a test.
+- Run the live tests before merging anything that changes how the connector talks to S3 — in
+  particular every AWS SDK upgrade, which can change default checksum behaviour.
+- `StorageGridChecksumProbeLiveIT` is a probe, not a test of STACKIT: it records what STACKIT
+  does with the SDK's default checksums in `target/stackit-live-findings.txt`. Carry new
+  findings into `docs/stackit-object-storage-compatibility.md`.
 - Bind request models through
   `io.camunda.connector.runtime.test.outbound.OutboundConnectorContextBuilder` (note the
   package: `runtime.test`, not `connector.test`) with JSON fixtures shaped exactly as the
@@ -205,12 +236,16 @@ mapping and derives a name from the template's `name` instead.
 
 The Connector SDK's **minor** version must match the minor version of the Connector Runtime
 the connector is deployed into; patch versions are interchangeable. An upgrade therefore
-touches four things together:
+touches these together:
 
 1. `version.connectors` in the root pom
-2. `version.camunda` in the root pom
-3. `camunda.engine.version.range` in the root pom
-4. `engineVersion` in every `@ElementTemplate` annotation
+2. `camunda.engine.version.range` in the root pom
+3. `engineVersion` in every `@ElementTemplate` annotation
+4. `version.jackson` in the root pom — set it to the `version.jackson-bom` that
+   `io.camunda.connector:connector-parent` declares for the new SDK version, because the
+   runtime provides Jackson and the connectors are compiled against it
+5. The `camunda/camunda` image in `examples/docker-compose.yml` and the version examples in
+   `.github/ISSUE_TEMPLATE/bug_report.yml`
 
 Dependabot (`.github/dependabot.yml`) groups all `io.camunda*` updates into a single PR and
 proposes **patch** releases only: a minor upgrade is a deliberate release-line decision, not a

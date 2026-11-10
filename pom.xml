@@ -24,7 +24,7 @@
       <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
       <distribution>repo</distribution>
       <comments>Distributed with the Camunda Marketplace third-party connector notice; see the
-        LICENSE file at the root of this repository.</comments>
+        LICENSE.md file at the root of this repository.</comments>
     </license>
   </licenses>
 

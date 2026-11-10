@@ -1,11 +1,6 @@
-These Connectors are developed by Camunda's partners or independent third-party
-developers. To receive assistance or support for the STACKIT Connectors for
-Camunda 8, contact envite consulting GmbH directly using the contact information
-in the README. Camunda disclaims any support obligation for the Connectors.
+This Connector is developed by Camunda's partners or independent third-party developers. To receive assistance or support for the Connector STACKIT Connectors for Camunda 8, contact envite consulting GmbH directly using the contact information. Camunda disclaims any support obligation for the Connector.
 
-By installing these connectors, you consent to Camunda sharing your contact
-information with the developer of these connectors so that you can receive more
-information about them directly from the developer.
+By installing this connector, you consent to Camunda sharing your contact information with the developer of this connector so that you can receive more information about it directly from the developer.
 
 ---
 

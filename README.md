@@ -1,7 +1,7 @@
 # STACKIT Connectors for Camunda 8
 
 [![Build](https://github.com/envite-consulting/camunda-stackit-connectors/actions/workflows/build.yml/badge.svg)](https://github.com/envite-consulting/camunda-stackit-connectors/actions/workflows/build.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
 ![Compatible with: Camunda 8](https://img.shields.io/badge/Compatible%20with-Camunda%208-0072Ce)
 
 Camunda 8 Connectors for [STACKIT](https://stackit.com) managed services — the sovereign
@@ -153,7 +153,7 @@ connectors/
 bundle/                runnable Connector Runtime containing every connector
 docs/                  cross-cutting technical documentation
 examples/              docker-compose setup and example BPMN
-tools/                 element template schema validation
+tools/                 element template schema validation, live test runner
 ```
 
 `auth/` has no consumer inside this repository yet, by design: the Object Storage connector
@@ -163,19 +163,107 @@ connectors. The reasoning is in [`AGENTS.md`](AGENTS.md).
 
 ## Building
 
-Requires **JDK 21** and Docker (for integration tests). Maven comes from the committed
-wrapper — use `./mvnw`, not a system `mvn`:
+Requires **JDK 21** and Docker or Podman (for integration tests). Maven comes from the
+committed wrapper — use `./mvnw`, not a system `mvn`:
 
 ```bash
 ./mvnw -B verify      # build, unit tests, integration tests, element template generation
 ./mvnw -B test        # unit tests only, no Docker required
+tools/live-tests.sh   # live tests against your own STACKIT project, see below
 ```
 
-`verify` currently runs 403 unit tests and 10 Docker-backed integration tests.
+Integration tests run the connector against [Floci](https://floci.io), an open-source S3
+emulator, in a container. With Podman, point Testcontainers at its socket first:
+`export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock TESTCONTAINERS_RYUK_DISABLED=true`.
 
 The wrapper pins Maven 3.10.0 because Camunda's element template generator plugin requires
 it. [`AGENTS.md`](AGENTS.md) is the full technical guide — build conventions, architecture
 decisions, element template rules and how to add a connector.
+
+## Testing against real STACKIT
+
+An emulator is not NetApp StorageGRID, so a small suite of **live tests** runs the connector
+against a real STACKIT project: all eight operations end to end, read back byte for byte, plus
+probes that record how STACKIT treats the AWS SDK's default checksums. They never run in CI or
+in a plain `./mvnw verify`; you start them with `tools/live-tests.sh`.
+
+Each run writes below its own prefix, `camunda-stackit-connectors-live-it/<suite>/<timestamp>-<random>/`,
+and deletes everything it wrote at the end. A run stores under 2 MB for a few seconds, so it
+costs a fraction of a cent: STACKIT bills Object Storage per started GB-hour, at about
+€0.00004 per GB-hour in `eu01` as of November 2026.
+
+### What you need
+
+| Value | Where it comes from | Required |
+| --- | --- | --- |
+| Region | `eu01` (Germany) or `eu02` (Austria), wherever you create the bucket | yes |
+| Bucket name | a bucket you create for the tests | yes |
+| Access key ID + secret access key | an Object Storage credentials group in the same project | yes |
+| Project ID + service account key JSON | a service account with the `reader` role | only for the key-flow tests of `auth/` |
+
+### Setting up a STACKIT project, step by step
+
+These steps follow the [STACKIT documentation](https://docs.stackit.cloud/) as of November
+2026. Every step can also be done with the [STACKIT CLI](https://github.com/stackitcloud/stackit-cli)
+(see the commands below the steps).
+
+1. **Customer account.** Sign in at [portal.stackit.cloud](https://portal.stackit.cloud). With
+   a fresh user, the Portal offers **Create customer account**. That account holds billing:
+   company name and address, VAT ID, commercial register number, and a payment method. Self-service
+   sign-up covers Germany, Austria and Switzerland. Your organization is created once STACKIT
+   approves the customer account.
+   ([docs](https://docs.stackit.cloud/platform/customer-accounts/how-tos/create-a-customer-account/))
+2. **A dedicated project.** *Resource Manager → Create project*, for example
+   `camunda-connectors-it`, type **Public**. Use a project that holds nothing else: any
+   credential of a project can reach every bucket in it.
+   ([docs](https://docs.stackit.cloud/platform/resource-manager/how-tos/create-a-project/))
+3. **Enable Object Storage.** In the project: *Object Storage → Overview → Enable Object
+   Storage*. ([docs](https://docs.stackit.cloud/products/storage/object-storage/how-tos/enable-object-storage/))
+4. **Create a bucket.** *Object Storage → Buckets → Create bucket*. Names are globally unique:
+   3–63 lowercase letters, digits and hyphens, so add a random suffix, for example
+   `camunda-it-7f3k2`. No Object Lock or versioning needed.
+   ([docs](https://docs.stackit.cloud/products/storage/object-storage/how-tos/create-and-manage-object-storage-buckets/))
+5. **Create an access key.** *Object Storage → Credentials & Groups*: create a credentials group
+   (for example `camunda-it`), open it, and create credentials in it. **Copy the secret access
+   key immediately** — STACKIT shows it exactly once.
+   ([docs](https://docs.stackit.cloud/products/storage/object-storage/how-tos/create-and-delete-object-storage-credentials/))
+6. **Optional: a service account**, for the key-flow tests of `auth/`. *IAM and Management →
+   Service accounts → Create service account*; then *IAM and Management → Access → Grant
+   access*, give that service account the `reader` role on the project; then open the
+   service account, *Service account keys → Create service account key → Create new key
+   pair*, and download the JSON. It contains the private key and cannot be downloaded again.
+   The project ID is the **ID** column in *Resource Manager*.
+   ([docs](https://docs.stackit.cloud/platform/access-and-identity/service-accounts/how-tos/manage-service-account-keys/))
+
+The same with the STACKIT CLI (`stackit auth login` first):
+
+```bash
+stackit project create --parent-id <ORG_ID> --name camunda-connectors-it
+stackit config set --project-id <PROJECT_ID>
+stackit object-storage enable --region eu01
+stackit object-storage bucket create camunda-it-<random> --region eu01
+stackit object-storage credentials-group create --name camunda-it --region eu01 -o json -y
+stackit object-storage credentials create --credentials-group-id <GROUP_ID> --region eu01 -o json -y
+# optional, for auth/:
+stackit service-account create --name camunda-it
+stackit project member add <SERVICE_ACCOUNT_EMAIL> --role reader
+stackit service-account key create --email <SERVICE_ACCOUNT_EMAIL> -o json -y > .secrets/stackit-service-account-key.json
+```
+
+### Running the live tests
+
+```bash
+mkdir -p .secrets
+cp tools/live-test.env.example .secrets/live-test.env
+$EDITOR .secrets/live-test.env      # region, bucket, access key, secret; optionally project ID
+tools/live-tests.sh
+```
+
+`.secrets/` is gitignored and excluded from the Docker build context. The script prints which
+values are set but never the values themselves. Without a configured service account the
+`auth/` live tests are skipped, and so is everything when no configuration is found at all.
+The checksum probes print `FINDING` lines and also write them to
+`connectors/object-storage/target/stackit-live-findings.txt`.
 
 ## Roadmap
 
@@ -200,7 +288,7 @@ support obligation for them.
 
 ## License
 
-[Apache License 2.0](LICENSE). The `LICENSE` file additionally carries the Camunda Marketplace
+[Apache License 2.0](LICENSE.md). The `LICENSE.md` file additionally carries the Camunda Marketplace
 third-party connector notice, which the Marketplace listing requires.
 
 STACKIT is a trademark of STACKIT GmbH & Co. KG. Camunda is a trademark of Camunda Services

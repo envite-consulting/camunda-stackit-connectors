@@ -65,10 +65,10 @@ public issue.
 
 ## Licensing
 
-Contributions are accepted under the [Apache License 2.0](LICENSE). By opening a pull request
+Contributions are accepted under the [Apache License 2.0](LICENSE.md). By opening a pull request
 you confirm you have the right to contribute the code under that license.
 
-Note that `LICENSE` also carries the Camunda Marketplace third-party connector notice ahead
+Note that `LICENSE.md` also carries the Camunda Marketplace third-party connector notice ahead
 of the Apache terms. That notice is required for the Marketplace listing — please do not
 remove or reword it.
 
