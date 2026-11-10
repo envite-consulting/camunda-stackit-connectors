@@ -68,19 +68,23 @@
     <!--
       The Camunda Connector SDK minor version must match the minor version of the Camunda
       Connector Runtime the connectors are deployed into; only patch versions are freely
-      interchangeable. Bump version.connectors, version.camunda and engineVersion in the
-      @ElementTemplate annotations together. See AGENTS.md ("Upgrading Camunda").
+      interchangeable. Bump version.connectors, camunda.engine.version.range and the
+      engineVersion of every @ElementTemplate together. See AGENTS.md ("Upgrading Camunda").
     -->
     <version.connectors>8.10.4</version.connectors>
-    <version.camunda>8.10.9</version.camunda>
     <!-- Must be kept in sync with version.connectors; feeds @ElementTemplate(engineVersion). -->
     <camunda.engine.version.range>^8.10</camunda.engine.version.range>
 
     <!-- ==================== Dependencies ==================== -->
-    <version.stackit-sdk-core>0.4.1</version.stackit-sdk-core>
-    <version.stackit-sdk-objectstorage>0.5.0</version.stackit-sdk-objectstorage>
-    <version.aws-sdk2>2.57.11</version.aws-sdk2>
-    <version.jackson>2.23.0</version.jackson>
+    <version.aws-sdk2>2.57.12</version.aws-sdk2>
+    <!--
+      Jackson is `provided`: the connector runtime puts its own Jackson on the classpath and the
+      connectors run against that one. Compile against the same line, or a connector can call
+      an API that does not exist at runtime and fail with NoSuchMethodError. 2.22.x is what
+      io.camunda.connector:connector-parent ${version.connectors} declares (version.jackson-bom).
+      Dependabot proposes patch releases only for this reason.
+    -->
+    <version.jackson>2.22.4</version.jackson>
     <version.jakarta-validation>3.1.1</version.jakarta-validation>
     <version.slf4j>2.0.20</version.slf4j>
     <version.spring-boot>4.1.2</version.spring-boot>
@@ -89,7 +93,8 @@
     <version.junit>6.1.3</version.junit>
     <version.mockito>5.24.0</version.mockito>
     <version.assertj>3.27.7</version.assertj>
-    <version.testcontainers>1.21.4</version.testcontainers>
+    <version.testcontainers>2.0.5</version.testcontainers>
+    <version.testcontainers-floci>2.17.0</version.testcontainers-floci>
     <version.wiremock>3.13.2</version.wiremock>
     <!--
       logback is deliberately NOT pinned here. The Spring Boot BOM manages logback-classic
@@ -104,9 +109,7 @@
     <plugin.version.dependency>3.11.0</plugin.version.dependency>
     <plugin.version.deploy>3.2.0</plugin.version.deploy>
     <plugin.version.enforcer>3.7.0</plugin.version.enforcer>
-    <plugin.version.exec>3.6.4</plugin.version.exec>
     <plugin.version.failsafe>3.6.1</plugin.version.failsafe>
-    <plugin.version.flatten>1.9.0</plugin.version.flatten>
     <plugin.version.gpg>3.2.8</plugin.version.gpg>
     <plugin.version.install>3.2.0</plugin.version.install>
     <plugin.version.jacoco>0.8.16</plugin.version.jacoco>
@@ -125,13 +128,17 @@
     <!--
       Integration tests are tagged @Tag("integration") and run by failsafe (mvn verify).
       Surefire excludes them so that `mvn test` needs no Docker daemon.
+
+      Live tests are tagged @Tag("live"), talk to a real STACKIT project and run only with
+      -Pstackit-live (see README.md, "Testing against real STACKIT"). Neither a normal build
+      nor CI ever selects them.
     -->
     <!--
       Default so that surefire's @{jacoco.argLine} resolves even when JaCoCo is skipped
       (e.g. `-Djacoco.skip=true`); the prepare-agent goal overwrites it when it runs.
     -->
     <jacoco.argLine />
-    <surefire.excluded.groups>integration</surefire.excluded.groups>
+    <surefire.excluded.groups>integration,live</surefire.excluded.groups>
     <failsafe.included.groups>integration</failsafe.included.groups>
     <skipITs>false</skipITs>
   </properties>
@@ -197,42 +204,13 @@
       </dependency>
       <dependency>
         <groupId>io.camunda.connector</groupId>
-        <artifactId>connector-runtime-core</artifactId>
-        <version>${version.connectors}</version>
-      </dependency>
-      <dependency>
-        <groupId>io.camunda.connector</groupId>
         <artifactId>connector-runtime-test</artifactId>
-        <version>${version.connectors}</version>
-      </dependency>
-      <dependency>
-        <groupId>io.camunda.connector</groupId>
-        <artifactId>connector-test</artifactId>
         <version>${version.connectors}</version>
       </dependency>
       <dependency>
         <groupId>io.camunda.connector</groupId>
         <artifactId>spring-boot-starter-camunda-connectors</artifactId>
         <version>${version.connectors}</version>
-      </dependency>
-
-      <!-- ===== Camunda process testing ===== -->
-      <dependency>
-        <groupId>io.camunda</groupId>
-        <artifactId>camunda-process-test-spring</artifactId>
-        <version>${version.camunda}</version>
-      </dependency>
-
-      <!-- ===== STACKIT SDK ===== -->
-      <dependency>
-        <groupId>cloud.stackit.sdk</groupId>
-        <artifactId>core</artifactId>
-        <version>${version.stackit-sdk-core}</version>
-      </dependency>
-      <dependency>
-        <groupId>cloud.stackit.sdk</groupId>
-        <artifactId>objectstorage</artifactId>
-        <version>${version.stackit-sdk-objectstorage}</version>
       </dependency>
 
       <!-- ===== AWS SDK v2 (S3 wire protocol for STACKIT Object Storage) ===== -->
@@ -257,10 +235,9 @@
       </dependency>
 
       <!--
-        Imported BEFORE the Spring Boot BOM: in dependencyManagement the first declaration
-        wins, and Spring Boot manages org.testcontainers:testcontainers but not its module
-        artifacts. Letting Spring Boot win left the core at 2.0.5 while junit-jupiter stayed
-        on 1.21.4 - two different majors of the same library on one test classpath.
+        Imported before the Spring Boot BOM, which imports testcontainers-bom as well: in
+        dependencyManagement the first declaration wins, so this keeps the Testcontainers
+        version under our control rather than Spring Boot's.
       -->
       <dependency>
         <groupId>org.testcontainers</groupId>
@@ -268,6 +245,15 @@
         <version>${version.testcontainers}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <!--
+        Floci, the MIT-licensed local AWS emulator, as the S3 server for integration tests. The
+        2.x line of the module is built against Testcontainers 2.x.
+      -->
+      <dependency>
+        <groupId>io.floci</groupId>
+        <artifactId>testcontainers-floci-aws</artifactId>
+        <version>${version.testcontainers-floci}</version>
       </dependency>
 
       <!-- ===== Spring Boot (bundle runtime only) ===== -->
@@ -501,16 +487,6 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-gpg-plugin</artifactId>
           <version>${plugin.version.gpg}</version>
-        </plugin>
-        <plugin>
-          <groupId>org.codehaus.mojo</groupId>
-          <artifactId>exec-maven-plugin</artifactId>
-          <version>${plugin.version.exec}</version>
-        </plugin>
-        <plugin>
-          <groupId>org.codehaus.mojo</groupId>
-          <artifactId>flatten-maven-plugin</artifactId>
-          <version>${plugin.version.flatten}</version>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -782,6 +758,18 @@
           </plugin>
         </plugins>
       </build>
+    </profile>
+
+    <!--
+      Runs the live tests against a real STACKIT project instead of the container-backed
+      integration tests. Credentials come from environment variables; tools/live-tests.sh
+      reads them from the gitignored live-test.env and runs this profile.
+    -->
+    <profile>
+      <id>stackit-live</id>
+      <properties>
+        <failsafe.included.groups>live</failsafe.included.groups>
+      </properties>
     </profile>
 
     <!-- Publishing to Maven Central via the Sonatype Central Portal. -->

@@ -23,10 +23,13 @@ import de.envite.camunda.stackit.objectstorage.model.request.StackitObjectStorag
 import de.envite.camunda.stackit.objectstorage.model.request.StackitObjectStorageConfiguration;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Duration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
+import software.amazon.awssdk.http.SdkHttpClient;
+import software.amazon.awssdk.http.apache5.Apache5HttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
@@ -43,8 +46,24 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
  */
 public class StackitS3ClientFactory {
 
+  /** How long to wait for a TCP and TLS connection to the S3 endpoint. */
+  static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(10);
+
+  /**
+   * How long a single read or write on an open connection may block. This bounds inactivity, not
+   * the duration of a transfer, so it does not limit the size of an upload or a download.
+   */
+  static final Duration SOCKET_TIMEOUT = Duration.ofSeconds(60);
+
   /**
    * Builds the S3 client for a job.
+   *
+   * <p>The HTTP client is chosen explicitly instead of being discovered on the classpath. Inside
+   * {@code camunda/connectors-bundle} several AWS SDK HTTP client implementations sit side by side,
+   * brought in by Camunda's own AWS connectors, and the SDK picks one of them by a built-in
+   * priority that the {@code software.amazon.awssdk.http.service.impl} system property can override
+   * for the whole JVM. Naming the client keeps this connector on the client its tests run with,
+   * whatever else is deployed next to it, and gives it timeouts of its own.
    *
    * @param authentication the STACKIT access key to sign with; must not be {@code null}
    * @param configuration the endpoint and addressing settings; must not be {@code null}
@@ -53,7 +72,21 @@ public class StackitS3ClientFactory {
   public S3Client createClient(
       final StackitObjectStorageAuthentication authentication,
       final StackitObjectStorageConfiguration configuration) {
-    return newClientBuilder(authentication, configuration).build();
+    return newClientBuilder(authentication, configuration)
+        .httpClientBuilder(httpClientBuilder())
+        .build();
+  }
+
+  /**
+   * The HTTP client builder {@link #createClient} uses. The client it builds is owned, and closed,
+   * by the {@link S3Client}.
+   *
+   * @return a builder for the connector's HTTP client, never {@code null}
+   */
+  public static SdkHttpClient.Builder<?> httpClientBuilder() {
+    return Apache5HttpClient.builder()
+        .connectionTimeout(CONNECTION_TIMEOUT)
+        .socketTimeout(SOCKET_TIMEOUT);
   }
 
   /**
@@ -62,6 +95,8 @@ public class StackitS3ClientFactory {
    * <p>Exposed so that an embedder - or a test that has to see the bytes going onto the wire - can
    * attach an {@code SdkHttpClient}, an {@code ExecutionInterceptor} or an override configuration
    * without having to repeat, and risk diverging from, the STACKIT-specific settings applied here.
+   * No HTTP client is set on it: the SDK refuses a builder that has both an HTTP client and an HTTP
+   * client builder, so {@link #createClient} adds {@link #httpClientBuilder()} only at the end.
    *
    * @param authentication the STACKIT access key to sign with; must not be {@code null}
    * @param configuration the endpoint and addressing settings; must not be {@code null}

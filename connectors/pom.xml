@@ -79,15 +79,6 @@
       <scope>provided</scope>
     </dependency>
 
-    <!--
-      Camunda's shared ObjectMapper configuration (FEEL + document datatypes). Compile
-      scope, matching how Camunda scopes it in their own connector modules.
-    -->
-    <dependency>
-      <groupId>io.camunda.connector</groupId>
-      <artifactId>connector-object-mapper</artifactId>
-    </dependency>
-
     <!-- Shared STACKIT connector code. -->
     <dependency>
       <groupId>de.envite.camunda.stackit</groupId>
@@ -104,6 +95,18 @@
     <dependency>
       <groupId>io.camunda.connector</groupId>
       <artifactId>connector-runtime-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Camunda's shared ObjectMapper configuration (FEEL + document datatypes), used by tests to
+      bind variables exactly as the runtime does. Test scope only: no main code uses it, and at
+      runtime the connector runtime provides it. As a compile dependency it used to drag
+      jackson-datatype-jsr310/-jdk8 into the shaded jar, where they would compete with the
+      runtime's own copies.
+    -->
+    <dependency>
+      <groupId>io.camunda.connector</groupId>
+      <artifactId>connector-object-mapper</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -124,7 +127,8 @@
             <!--
               includeDependencies does not resolve transitively, so every module whose
               classes take part in the @ElementTemplate graph must be listed explicitly.
-              All connector request models extend the shared base in stackit-connector-core.
+              The request models use types from stackit-connector-core, such as the
+              StackitRegion enum behind the Region dropdown.
             -->
             <includeDependencies>
               <includeDependency>de.envite.camunda.stackit:stackit-connector-core</includeDependency>

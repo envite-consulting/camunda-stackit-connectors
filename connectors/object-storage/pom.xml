@@ -27,10 +27,29 @@
       The S3 data plane is spoken with the AWS SDK v2 against an endpoint override. The
       STACKIT Java SDK covers only the management API (buckets, credential groups), which
       this connector does not use - see README.md, "Scope".
+
+      The s3 artifact pulls in two HTTP clients by default. Only the synchronous Apache 5
+      client is used (and selected explicitly in StackitS3ClientFactory), so the Netty-based
+      async client is excluded: it would put ~5 MB of Netty into the shaded jar, where it
+      would compete with the Netty the connector runtime's own gRPC stack runs on.
     -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>apache5-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>http-client-spi</artifactId>
     </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
@@ -49,7 +68,12 @@
       <artifactId>auth</artifactId>
     </dependency>
 
-    <!-- Integration tests run against a real S3 implementation in Docker. -->
+    <!-- Integration tests run against Floci, an S3-compatible emulator, in a container. -->
+    <dependency>
+      <groupId>io.floci</groupId>
+      <artifactId>testcontainers-floci-aws</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
@@ -57,7 +81,7 @@
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
