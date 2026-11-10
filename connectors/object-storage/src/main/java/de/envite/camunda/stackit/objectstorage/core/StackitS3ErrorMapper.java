@@ -18,10 +18,13 @@ package de.envite.camunda.stackit.objectstorage.core;
 
 import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
+import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.exception.SdkServiceException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -80,9 +83,7 @@ public final class StackitS3ErrorMapper {
     if (failure instanceof SdkServiceException serviceException) {
       return mapServiceException(serviceException, "", action);
     }
-    if (failure instanceof SdkClientException clientException) {
-      // Covers DNS failures, connection refused, TLS handshake failures, and both the API call and
-      // the API call attempt timeout, all of which extend SdkClientException.
+    if (failure instanceof SdkClientException clientException && isTransient(clientException)) {
       return StackitConnectorErrors.retryable(
           StackitErrorCodes.CONNECTION_ERROR,
           "Could not reach STACKIT Object Storage while "
@@ -99,6 +100,30 @@ public final class StackitS3ErrorMapper {
         StackitErrorCodes.UNEXPECTED_ERROR,
         "Unexpected failure while " + action + ": " + rootMessage(failure) + ".",
         failure);
+  }
+
+  /**
+   * Whether a client-side failure is the kind a retry can fix.
+   *
+   * <p>The SDK raises {@link SdkClientException} for two very different things: the network failing
+   * (DNS, connection refused, TLS, a read timing out, the API call or attempt timeout) and the
+   * request never being sendable at all (an input the SDK cannot marshal, a missing HTTP
+   * implementation). Only the first is transient. Retrying the second burns every retry of the job
+   * on a failure that is reported as a connection problem it never was.
+   */
+  static boolean isTransient(final SdkClientException failure) {
+    if (failure instanceof ApiCallTimeoutException
+        || failure instanceof ApiCallAttemptTimeoutException) {
+      return true;
+    }
+    for (Throwable cause = failure.getCause();
+        cause != null && cause != cause.getCause();
+        cause = cause.getCause()) {
+      if (cause instanceof IOException) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -171,9 +196,10 @@ public final class StackitS3ErrorMapper {
               + action
               + " ("
               + detail
-              + "). The credentials are valid but belong to a different project than the bucket -"
-              + " on STACKIT every credential of a project can access every bucket of that"
-              + " project, and nothing outside it.",
+              + "). The credentials are valid but may not access this resource: either the bucket"
+              + " belongs to another STACKIT project (by default every credential of a project can"
+              + " access every bucket of that project, and nothing outside it), or a bucket policy"
+              + " denies this credentials group.",
           failure);
     }
     if (RATE_LIMITED_CODES.contains(errorCode) || status == 429) {

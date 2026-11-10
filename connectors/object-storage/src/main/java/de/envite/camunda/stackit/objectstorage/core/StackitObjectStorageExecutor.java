@@ -47,14 +47,11 @@ import io.camunda.connector.api.outbound.OutboundConnectorContext;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -64,11 +61,14 @@ import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
+import software.amazon.awssdk.services.s3.model.Tag;
+import software.amazon.awssdk.services.s3.model.Tagging;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -166,7 +166,9 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
       requestBuilder.metadata(operation.metadata());
     }
     if (operation.tags() != null && !operation.tags().isEmpty()) {
-      requestBuilder.tagging(encodeTags(operation.tags()));
+      // The SDK's own Tagging adapter percent-encodes keys and values as the x-amz-tagging header
+      // requires; URLEncoder would turn a space into '+', which S3 stores as a literal plus.
+      requestBuilder.tagging(toTagging(operation.tags()));
     }
     if (Boolean.TRUE.equals(operation.serverSideEncryption())) {
       // STACKIT supports SSE-S3 and SSE-C only. AES256 selects SSE-S3, where STACKIT holds the key;
@@ -178,7 +180,7 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     }
 
     final String action = "uploading object '" + key + "' to bucket '" + bucket + "'";
-    try (InputStream content = document.asInputStream()) {
+    try (InputStream content = size != null && size >= 0 ? document.asInputStream() : null) {
       final RequestBody body = requestBody(document, content, size, contentType);
       final var response = s3Client.putObject(requestBuilder.build(), body);
       LOG.debug("Uploaded {} bytes to s3://{}/{}", size, bucket, key);
@@ -374,6 +376,7 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
           response.storageClassAsString());
     } catch (final S3Exception e) {
       if (StackitS3ErrorMapper.isMissingObject(e)) {
+        requireBucketExists(bucket, key);
         LOG.debug("Object s3://{}/{} does not exist, reporting exists: false", bucket, key);
         return HeadObjectResult.notFound(bucket, key);
       }
@@ -382,6 +385,39 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     } catch (final RuntimeException e) {
       throw StackitS3ErrorMapper.map(
           e, "reading the metadata of object '" + key + "' in bucket '" + bucket + "'");
+    }
+  }
+
+  /**
+   * Makes sure a 404 from {@code HeadObject} really means "no such object".
+   *
+   * <p>A {@code HEAD} response has no body, so S3 cannot say <em>what</em> was not found: a missing
+   * key and a missing bucket arrive as the same bare 404. Reporting {@code exists: false} for a
+   * bucket that does not exist would hide a configuration fault behind an ordinary process branch,
+   * so the bucket is checked separately - one extra request, and only on the not-found path.
+   *
+   * <p>Only a 404 for the bucket is treated as proof that it is missing. Any other answer, such as
+   * a 403 for a credentials group that a bucket policy allows to read objects but not to list the
+   * bucket, leaves the object-level answer standing.
+   */
+  private void requireBucketExists(final String bucket, final String key) {
+    try {
+      s3Client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
+    } catch (final S3Exception e) {
+      if (e.statusCode() == 404) {
+        throw StackitConnectorErrors.fatal(
+            StackitErrorCodes.NOT_FOUND,
+            "The bucket '"
+                + bucket
+                + "' does not exist in the selected region, so the metadata of object '"
+                + key
+                + "' cannot be read. Check the bucket name and the region of the task.",
+            e);
+      }
+      LOG.debug(
+          "Could not confirm that bucket {} exists (HTTP {}); reporting the object as missing",
+          bucket,
+          e.statusCode());
     }
   }
 
@@ -481,15 +517,15 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
   /**
    * Builds the request body for an upload.
    *
-   * <p>When the document store knows the size, the stream is handed to the SDK with that length and
-   * is streamed through to STACKIT without ever being held in memory - which is what makes a 5 TB
-   * object possible at all.
-   *
-   * <p>When the size is unknown, there is no way to set {@code Content-Length} up front, so the SDK
-   * is given a {@code ContentStreamProvider} instead. It then buffers the body to determine the
-   * length before sending, which costs heap proportional to the object size. Documents produced by
-   * the Camunda document store always carry a size, so this branch is reached only for an inline or
-   * external document whose producer did not report one.
+   * @param content the open document stream when {@code size} is known, otherwise {@code null}
+   *     <p>When the document store knows the size, the stream is handed to the SDK with that length
+   *     and is streamed through to STACKIT without ever being held in memory - which is what makes
+   *     a 5 TB object possible at all.
+   *     <p>When the size is unknown, there is no way to set {@code Content-Length} up front, so the
+   *     SDK is given a {@code ContentStreamProvider} instead. It then buffers the body to determine
+   *     the length before sending, which costs heap proportional to the object size. Documents
+   *     produced by the Camunda document store always carry a size, so this branch is reached only
+   *     for an inline or external document whose producer did not report one.
    */
   private static RequestBody requestBody(
       final Document document,
@@ -568,14 +604,17 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     return duration;
   }
 
-  private static String encodeTags(final Map<String, String> tags) {
-    return tags.entrySet().stream()
-        .map(entry ->
-            URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)
-                + "="
-                + URLEncoder.encode(
-                    entry.getValue() == null ? "" : entry.getValue(), StandardCharsets.UTF_8))
-        .collect(Collectors.joining("&"));
+  private static Tagging toTagging(final Map<String, String> tags) {
+    return Tagging.builder()
+        .tagSet(
+            tags.entrySet().stream()
+                .map(entry ->
+                    Tag.builder()
+                        .key(entry.getKey())
+                        .value(entry.getValue() == null ? "" : entry.getValue())
+                        .build())
+                .toList())
+        .build();
   }
 
   private static void applyVersionId(

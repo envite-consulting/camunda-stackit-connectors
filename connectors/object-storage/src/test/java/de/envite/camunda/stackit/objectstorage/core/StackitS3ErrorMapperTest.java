@@ -31,6 +31,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
 import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
@@ -101,7 +102,9 @@ class StackitS3ErrorMapperTest {
           StackitS3ErrorMapper.map(s3Exception(403, "AccessDenied"), ACTION);
 
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.ACCESS_DENIED);
-      assertThat(mapped).hasMessageContaining("belong to a different project");
+      assertThat(mapped)
+          .hasMessageContaining("belongs to another STACKIT project")
+          .hasMessageContaining("bucket policy");
     }
 
     @ParameterizedTest(name = "{0} maps to AUTHENTICATION_FAILED")
@@ -213,6 +216,31 @@ class StackitS3ErrorMapperTest {
 
       assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
+    }
+
+    @Test
+    @DisplayName("an attempt timeout without an I/O cause is still retried")
+    void apiCallAttemptTimeout() {
+      final RuntimeException mapped =
+          StackitS3ErrorMapper.map(
+              ApiCallAttemptTimeoutException.create(Duration.ofSeconds(30).toMillis()), ACTION);
+
+      assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
+    }
+
+    @Test
+    @DisplayName("a client-side failure that is not a network problem is fatal, not retried")
+    void nonTransientClientFailure() {
+      final RuntimeException mapped =
+          StackitS3ErrorMapper.map(
+              SdkClientException.create("Unable to marshall request to JSON"), ACTION);
+
+      assertThat(mapped)
+          .isInstanceOf(ConnectorException.class)
+          .isNotInstanceOf(ConnectorRetryException.class);
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.UNEXPECTED_ERROR);
+      assertThat(mapped).hasMessageContaining("Unable to marshall request");
     }
   }
 

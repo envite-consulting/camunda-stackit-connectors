@@ -72,13 +72,16 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -226,7 +229,8 @@ class StackitObjectStorageExecutorTest {
 
       verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
       assertThat(requestCaptor.getValue().metadata()).containsExactly(Map.entry("orderId", "4711"));
-      assertThat(requestCaptor.getValue().tagging()).isEqualTo("env=prod+test");
+      // Percent-encoded, as the x-amz-tagging header requires: a '+' would be stored as a plus.
+      assertThat(requestCaptor.getValue().tagging()).isEqualTo("env=prod%20test");
       assertThat(requestCaptor.getValue().serverSideEncryption())
           .isEqualTo(ServerSideEncryption.AES256);
       assertThat(result).isEqualTo(new UploadObjectResult(BUCKET, "k", "\"e\"", "v1", "AES256"));
@@ -539,6 +543,38 @@ class StackitObjectStorageExecutorTest {
     void reportsAMissingObjectAsNotFound() {
       when(s3Client.headObject(any(HeadObjectRequest.class)))
           .thenThrow(NoSuchKeyException.builder().statusCode(404).message("Not Found").build());
+
+      final Object result = executor.execute(new HeadObject(BUCKET, "missing", null), context);
+
+      assertThat(result).isEqualTo(HeadObjectResult.notFound(BUCKET, "missing"));
+      verify(s3Client).headBucket(HeadBucketRequest.builder().bucket(BUCKET).build());
+    }
+
+    @Test
+    @DisplayName(
+        "fails with NOT_FOUND instead of answering exists: false when the bucket is missing")
+    void reportsAMissingBucketAsAnIncident() {
+      when(s3Client.headObject(any(HeadObjectRequest.class)))
+          .thenThrow(NoSuchKeyException.builder().statusCode(404).message("Not Found").build());
+      when(s3Client.headBucket(any(HeadBucketRequest.class)))
+          .thenThrow(NoSuchBucketException.builder().statusCode(404).message("Not Found").build());
+
+      assertThatThrownBy(() -> executor.execute(new HeadObject(BUCKET, "missing", null), context))
+          .isInstanceOfSatisfying(
+              ConnectorException.class,
+              e -> {
+                assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.NOT_FOUND);
+                assertThat(e.getMessage()).contains("bucket '" + BUCKET + "' does not exist");
+              });
+    }
+
+    @Test
+    @DisplayName("keeps exists: false when the bucket check itself is denied")
+    void keepsTheObjectAnswerWhenTheBucketCheckIsDenied() {
+      when(s3Client.headObject(any(HeadObjectRequest.class)))
+          .thenThrow(NoSuchKeyException.builder().statusCode(404).message("Not Found").build());
+      when(s3Client.headBucket(any(HeadBucketRequest.class)))
+          .thenThrow(S3Exception.builder().statusCode(403).message("Forbidden").build());
 
       final Object result = executor.execute(new HeadObject(BUCKET, "missing", null), context);
 
