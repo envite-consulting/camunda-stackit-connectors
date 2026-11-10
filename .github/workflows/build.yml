@@ -10,52 +10,58 @@
 #     check, so every Maven call disables it with -P'!autoFormat'.
 #   * Element templates are generated build output. They are committed, so CI
 #     re-generates them and proves the working tree is unchanged.
+#   * Every action is pinned to a full commit SHA, with the release it
+#     corresponds to as a trailing comment. Dependabot keeps both current.
+#   * The weekly scheduled run catches what changes without a commit: a new
+#     CodeQL query pack, a moved container image, a broken upstream release.
 name: Build
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
   workflow_dispatch:
 
 # Least privilege by default; jobs that need more raise it locally.
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes the running build. Runs on main are
+# never cancelled, so every commit there keeps its own CodeQL and test result.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # Required by the JUnit reporter to attach annotations to the run.
-      checks: write
+    timeout-minutes: 30
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
       # `verify` runs surefire (unit tests) and failsafe (the @Tag("integration")
-      # Testcontainers tests). GitHub-hosted Ubuntu runners ship a running Docker
-      # daemon, so Testcontainers works without extra setup.
+      # Testcontainers tests against Floci). GitHub-hosted Ubuntu runners ship a
+      # running Docker daemon, so Testcontainers works without extra setup. The
+      # @Tag("live") tests against real STACKIT are never selected here.
       - name: Build and run all tests
         run: ./mvnw -B -P'!autoFormat' verify
 
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-reports
           path: |
@@ -67,11 +73,13 @@ jobs:
       # Reporting must never be the reason a build goes red: `require_tests` and
       # `fail_on_failure` stay off (the Maven step already failed the job if a
       # test failed) and the step is continue-on-error so a missing report
-      # directory, or a read-only token on a fork PR, cannot fail the job.
+      # directory cannot fail the job. `annotate_only` writes annotations and
+      # the job summary without creating a check run, so no `checks: write`
+      # permission is needed.
       - name: Publish test summary
         if: always()
         continue-on-error: true
-        uses: mikepenz/action-junit-report@v6
+        uses: mikepenz/action-junit-report@a16be3a69023e9bd7e748ede768b3282ea7b30ce # v6.7.1
         with:
           report_paths: '**/target/*-reports/TEST-*.xml'
           check_name: Test results
@@ -84,14 +92,15 @@ jobs:
   format:
     name: Formatting and license headers
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -113,14 +122,15 @@ jobs:
   element-templates:
     name: Element templates
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -168,9 +178,9 @@ jobs:
           fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: lts/*
           cache: npm
           cache-dependency-path: tools/package-lock.json
 
@@ -186,13 +196,14 @@ jobs:
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       security-events: write
       contents: read
       actions: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -201,13 +212,13 @@ jobs:
       # disabled for this repository, otherwise GitHub rejects this workflow's
       # uploads as a conflicting configuration.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: java-kotlin
           build-mode: none
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:java-kotlin
 
@@ -217,11 +228,12 @@ jobs:
     # of the base ref against the head ref.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -232,11 +244,12 @@ jobs:
       # the current and the deprecated SPDX spellings are listed because the
       # dependency graph reports either, depending on the ecosystem.
       #
-      # Pinned to the exact tag v5.0.0: unlike most first-party actions,
-      # actions/dependency-review-action publishes no floating `v4`/`v5` major
-      # tag (only v1-v3 exist), so a major-tag pin is not available here.
+      # `deny-licenses` is marked deprecated in favour of `allow-licenses`, but an
+      # allow-list has to name every permissive license anywhere in the Maven and
+      # npm graphs and fails Dependabot pull requests whenever one is missing.
+      # Revisit when the option is actually removed.
       - name: Review dependency changes
-        uses: actions/dependency-review-action@v5.0.0
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           deny-licenses: >-
@@ -261,3 +274,29 @@ jobs:
             EUPL-1.2,
             CPAL-1.0,
             QPL-1.0
+
+  docker-image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Build only, never push. bundle/Dockerfile lists every module pom by hand
+      # for layer caching, so a new module that is not added there breaks the
+      # image - this job is what notices.
+      - name: Build the bundle image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: bundle/Dockerfile
+          push: false
+          tags: envite/stackit-connectors:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -19,7 +19,13 @@
     camunda/connectors-bundle deployment.</description>
 
   <properties>
-    <!-- The runtime jar is an application, not a library: nothing to publish or sign. -->
+    <!--
+      The runtime jar is an application, not a library: nothing to publish or sign.
+      skipPublishing is what the Central Portal plugin honours - it replaces the deploy
+      plugin's executions, so maven.deploy.skip alone would still upload this module
+      (without sources and javadoc, which fails validation of the whole deployment).
+    -->
+    <skipPublishing>true</skipPublishing>
     <maven.deploy.skip>true</maven.deploy.skip>
     <maven.javadoc.skip>true</maven.javadoc.skip>
     <maven.source.skip>true</maven.source.skip>

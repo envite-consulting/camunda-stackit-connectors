@@ -35,9 +35,8 @@ COPY connectors/pom.xml connectors/
 COPY connectors/object-storage/pom.xml connectors/object-storage/
 COPY bundle/pom.xml bundle/
 
-# Pre-populate the local repository. -pl bundle -am scopes resolution to the bundle and the modules
-# it depends on; inter-module SNAPSHOT dependencies are satisfied from the reactor rather than
-# downloaded. The !autoFormat profile is disabled on purpose: an image build must not rewrite the
+# Pre-populate the local repository for the whole reactor; inter-module SNAPSHOT dependencies are
+# satisfied from the reactor rather than downloaded. The !autoFormat profile is disabled on purpose: an image build must not rewrite the
 # sources it was handed (Spotless would otherwise reformat them and insert license headers).
 RUN --mount=type=cache,target=/root/.m2/repository \
     ./mvnw -B -ntp -P'!autoFormat' -DskipTests dependency:go-offline

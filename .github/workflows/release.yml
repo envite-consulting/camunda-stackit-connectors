@@ -1,9 +1,24 @@
 # Manual release of camunda-stackit-connectors to Maven Central via the
 # Sonatype Central Portal.
 #
-# REQUIRED REPOSITORY SECRETS - NONE OF THESE ARE CONFIGURED YET. The workflow
-# will fail until an organisation owner adds them under
-# Settings > Secrets and variables > Actions:
+# What a run does, in order:
+#   1. Refuses anything but `main` and anything that is not a release version.
+#   2. Commits the release version to every pom and tags that commit `v<version>`,
+#      so the tag always builds exactly what was released.
+#   3. Builds, tests (including the Floci integration tests), signs and uploads
+#      to the Central Portal in a single Maven run. autoPublish=false: the
+#      deployment then waits at https://central.sonatype.com/publishing/deployments
+#      for a human to press "Publish".
+#   4. Pushes the tag, creates the GitHub Release with the shaded jars and the
+#      element templates attached.
+#   5. Commits the next -SNAPSHOT version and pushes the release commit and that
+#      commit to main. If main moved during the run, this last push is refused;
+#      the release itself is unaffected and the warning says what to do.
+#
+# REQUIRED SECRETS - NONE OF THESE ARE CONFIGURED YET. Create a GitHub
+# environment named `maven-central` (Settings > Environments) and add them there,
+# not as repository secrets: an environment can require a reviewer to approve
+# every release before the secrets are released to the job.
 #
 #   MAVEN_CENTRAL_USERNAME  Central Portal user token *name*  (NOT the Sonatype
 #                           account name - generate a token at
@@ -17,13 +32,9 @@
 #
 # No credential values are hard-coded anywhere in this file, and the Maven
 # settings.xml is produced by actions/setup-java (server-id / *-env-var inputs)
-# rather than written by hand.
-#
-# The root pom's `release` profile wires maven-source-plugin,
-# maven-javadoc-plugin, maven-gpg-plugin and
-# org.sonatype.central:central-publishing-maven-plugin with
-# publishingServerId=central and autoPublish=false, so the deployment is
-# uploaded to the Portal and then *waits* for a human to press "Publish".
+# rather than written by hand. The checkout does not persist the GITHUB_TOKEN:
+# the Maven build runs third-party plugin code, so the token is handed to git
+# only in the steps that push.
 name: Release
 
 on:
@@ -32,6 +43,12 @@ on:
       version:
         description: 'Release version without -SNAPSHOT, e.g. 0.1.0'
         required: true
+        type: string
+      next_version:
+        description: >-
+          Next development version, e.g. 0.2.0-SNAPSHOT. Leave empty for the next
+          patch version (0.1.0 -> 0.1.1-SNAPSHOT; 1.0.0-rc1 -> 1.0.0-SNAPSHOT).
+        required: false
         type: string
       draft_release:
         description: >-
@@ -54,15 +71,42 @@ concurrency:
 jobs:
   release:
     name: Build, sign and publish
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: maven-central
     permissions:
-      # Needed to create the GitHub Release and its tag.
+      # Needed to push the release tag and commits and to create the GitHub Release.
       contents: write
     env:
       RELEASE_VERSION: ${{ inputs.version }}
+      NEXT_VERSION_INPUT: ${{ inputs.next_version }}
     steps:
+      - name: Validate version input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(alpha|beta|rc)[0-9.]*)?$ ]]; then
+            echo "::error::'$RELEASE_VERSION' is not a release version. Expected e.g. 0.1.0 or 1.2.0-rc1, and never a -SNAPSHOT."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
+          if [[ -n "$NEXT_VERSION_INPUT" ]]; then
+            next="$NEXT_VERSION_INPUT"
+          elif [[ -n "${BASH_REMATCH[4]}" ]]; then
+            next="$major.$minor.$patch-SNAPSHOT"
+          else
+            next="$major.$minor.$((patch + 1))-SNAPSHOT"
+          fi
+          if [[ ! "$next" =~ -SNAPSHOT$ ]]; then
+            echo "::error::Next version '$next' must end in -SNAPSHOT."
+            exit 1
+          fi
+          echo "NEXT_VERSION=$next" >> "$GITHUB_ENV"
+          echo "Releasing $RELEASE_VERSION, then continuing on $next."
+
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -71,7 +115,7 @@ jobs:
       # key into an isolated keyring, and configures gpg.passphraseEnvName so
       # maven-gpg-plugin reads the passphrase from $GPG_PASSPHRASE.
       - name: Set up JDK 21 and Maven Central credentials
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -83,37 +127,31 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase-env-var: GPG_PASSPHRASE
 
-      - name: Validate version input
+      - name: Commit and tag the release version
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9.]*)?$ ]]; then
-            echo "::error::'$RELEASE_VERSION' is not a release version. Expected e.g. 0.1.0 or 1.2.0-rc1, and never a -SNAPSHOT."
+          if git rev-parse -q --verify "refs/tags/v$RELEASE_VERSION" >/dev/null \
+             || git ls-remote --exit-code --tags origin "v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$RELEASE_VERSION already exists."
             exit 1
           fi
+          ./mvnw -B -ntp -P'!autoFormat' versions:set -DnewVersion="$RELEASE_VERSION" -DgenerateBackupPoms=false -DprocessAllModules
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -q -am "chore(release): $RELEASE_VERSION"
+          git tag -a "v$RELEASE_VERSION" -m "Release $RELEASE_VERSION"
 
-      # versions-maven-plugin is already in pluginManagement, so no version
-      # needs to be given here. The bumped poms are deliberately NOT committed
-      # or pushed by this workflow - merge the version bump first, or accept
-      # that the created tag points at the dispatched commit.
-      - name: Set the release version across the reactor
-        run: ./mvnw -B versions:set -DnewVersion="$RELEASE_VERSION" -DgenerateBackupPoms=false
-
-      # Full verify, including the Testcontainers integration tests: nothing
-      # ships to Central that has not been through the same gate as a PR.
-      - name: Build and verify
-        run: ./mvnw -B -P'!autoFormat' verify
-
-      # -Prelease adds sources, javadoc, GPG signatures and the Central
-      # publishing extension. autoPublish=false means `deploy` only uploads the
-      # deployment to the Portal; publishing stays a manual action at
-      # https://central.sonatype.com/publishing/deployments.
-      - name: Publish to the Sonatype Central Portal
+      # One Maven run builds, runs every test - including the Floci integration
+      # tests - and only then signs and uploads: nothing reaches Central that has
+      # not been through the same gate as a pull request. -Prelease adds sources,
+      # javadoc, GPG signatures and the Central publishing extension.
+      - name: Build, test, sign and upload to the Central Portal
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: ./mvnw -B -P'!autoFormat' -Prelease -DskipTests deploy
+        run: ./mvnw -B -ntp -P'!autoFormat' -Prelease deploy
 
       # Self-Managed and Camunda 8 Run users install element templates by
       # dropping the raw JSON into their Modeler resources directory, and the
@@ -163,10 +201,19 @@ jobs:
 
           ls -la release-assets release-assets/element-templates
 
+      - name: Push the release tag
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v$RELEASE_VERSION"
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ inputs.version }}
+          prerelease: ${{ contains(inputs.version, '-') }}
           name: v${{ inputs.version }}
           draft: ${{ inputs.draft_release }}
           generate_release_notes: true
@@ -198,6 +245,18 @@ jobs:
 
             The `*-with-dependencies.jar` assets are the shaded runtime jars to
             mount into `camunda/connectors-bundle`.
+
+      - name: Continue main on the next development version
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./mvnw -B -ntp -P'!autoFormat' versions:set -DnewVersion="$NEXT_VERSION" -DgenerateBackupPoms=false -DprocessAllModules
+          git commit -q -am "chore: continue on $NEXT_VERSION"
+          if ! git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/main; then
+            echo "::warning title=main was not advanced::main moved while the release ran, so the release commit and the bump to $NEXT_VERSION were not pushed. The release and tag v$RELEASE_VERSION are fine. Set the next version on main by hand: ./mvnw versions:set -DnewVersion=$NEXT_VERSION -DgenerateBackupPoms=false -DprocessAllModules"
+          fi
 
       - name: Remind about the manual publish step
         if: success()

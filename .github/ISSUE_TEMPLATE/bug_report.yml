@@ -49,7 +49,7 @@ body:
     attributes:
       label: Camunda version
       description: The Camunda 8 version you are running (orchestration cluster / runtime).
-      placeholder: '8.10.9'
+      placeholder: '8.10.9 (Orchestration Cluster), 8.10.5 (connectors bundle)'
     validations:
       required: true
 
@@ -74,7 +74,7 @@ body:
         How the connector is mounted: `camunda/connectors-bundle` image tag, a
         `*-with-dependencies.jar` on the classpath, or a custom Spring Boot
         application.
-      placeholder: 'camunda/connectors-bundle:8.10.9 with stackit-connector-object-storage-0.1.0-with-dependencies.jar in /opt/app'
+      placeholder: 'camunda/connectors-bundle:8.10.5 with stackit-connector-object-storage-0.1.0-with-dependencies.jar in /opt/app'
     validations:
       required: false
 
