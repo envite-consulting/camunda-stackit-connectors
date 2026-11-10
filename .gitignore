@@ -38,6 +38,8 @@ Thumbs.db
 *-service-account-key.json
 sa-key*.json
 credentials.json
+# Live test credentials and service account keys (tools/live-tests.sh)
+.secrets/
 
 # Logs
 *.log

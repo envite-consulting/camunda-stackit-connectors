@@ -35,6 +35,7 @@ tools/node_modules/
 **/sa-key*.json
 **/credentials.json
 **/connector-secrets.txt
+.secrets/
 **/*.log
 
 # Docs, examples and local state the image does not need. Excluding them keeps the context small
