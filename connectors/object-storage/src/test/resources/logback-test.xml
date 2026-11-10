@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Without this file logback falls back to logging everything at DEBUG, and then Apache
+  HttpClient's wire and header loggers write every request to the test output: Authorization
+  headers with the access key ID and signature, presigned URLs, and object payloads. In the live
+  tests that is real STACKIT material in target/failsafe-reports. Keep the HTTP stack and the AWS
+  SDK at WARN. If you raise them locally to debug a request, delete target/ afterwards.
+-->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="de.envite.camunda.stackit" level="INFO" />
+  <logger name="org.apache.hc" level="WARN" />
+  <logger name="software.amazon.awssdk" level="WARN" />
+  <logger name="org.testcontainers" level="INFO" />
+
+  <root level="WARN">
+    <appender-ref ref="CONSOLE" />
+  </root>
+</configuration>
