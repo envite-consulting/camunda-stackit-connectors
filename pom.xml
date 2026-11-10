@@ -89,7 +89,7 @@
     <version.junit>6.1.3</version.junit>
     <version.mockito>5.24.0</version.mockito>
     <version.assertj>3.27.7</version.assertj>
-    <version.testcontainers>1.21.4</version.testcontainers>
+    <version.testcontainers>2.0.5</version.testcontainers>
     <version.wiremock>3.13.2</version.wiremock>
     <!--
       logback is deliberately NOT pinned here. The Spring Boot BOM manages logback-classic
