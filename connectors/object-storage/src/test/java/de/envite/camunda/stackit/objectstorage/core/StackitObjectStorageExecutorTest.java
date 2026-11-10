@@ -442,6 +442,19 @@ class StackitObjectStorageExecutorTest {
     }
 
     @Test
+    @DisplayName(
+        "reports keyCount 0 for an empty listing that leaves KeyCount out, as STACKIT does")
+    void countsKeysWhenKeyCountIsMissing() {
+      when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))
+          .thenReturn(ListObjectsV2Response.builder().isTruncated(false).build());
+
+      final Object result =
+          executor.execute(new ListObjects(BUCKET, "empty/", null, null, null), context);
+
+      assertThat(((ListObjectsResult) result).keyCount()).isZero();
+    }
+
+    @Test
     @DisplayName("defaults the page size to 1000 and omits unset inputs")
     void defaultsThePageSize() {
       when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))

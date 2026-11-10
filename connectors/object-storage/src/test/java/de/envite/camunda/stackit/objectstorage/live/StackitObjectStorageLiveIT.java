@@ -318,6 +318,7 @@ class StackitObjectStorageLiveIT {
                 "listObjects",
                 Map.of("bucket", config.bucket(), "prefix", listPrefix, "maxKeys", 2));
     assertThat(firstPage.objects()).hasSize(2);
+    assertThat(firstPage.keyCount()).isEqualTo(2);
     assertThat(firstPage.truncated()).isTrue();
     assertThat(firstPage.nextContinuationToken()).isNotBlank();
 
@@ -351,6 +352,15 @@ class StackitObjectStorageLiveIT {
         .extracting(ObjectSummary::key)
         .containsExactlyInAnyOrder(listPrefix + "a.txt", listPrefix + "b.txt");
     assertThat(grouped.commonPrefixes()).containsExactly(listPrefix + "sub/");
+
+    final ListObjectsResult empty =
+        (ListObjectsResult)
+            harness.run(
+                "listObjects", Map.of("bucket", config.bucket(), "prefix", prefix + "nothing/"));
+    assertThat(empty.objects()).isEmpty();
+    assertThat(empty.keyCount())
+        .as("STACKIT omits KeyCount on an empty listing; the connector must still report 0")
+        .isZero();
   }
 
   @Test

@@ -347,7 +347,11 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
           commonPrefixes,
           response.nextContinuationToken(),
           Boolean.TRUE.equals(response.isTruncated()),
-          response.keyCount());
+          // StorageGRID leaves KeyCount out of an empty listing although ListObjectsV2 always
+          // carries it on AWS; count the page instead of handing a process a null.
+          response.keyCount() != null
+              ? response.keyCount()
+              : objects.size() + commonPrefixes.size());
     } catch (final RuntimeException e) {
       throw StackitS3ErrorMapper.map(e, "listing objects in bucket '" + bucket + "'");
     }
