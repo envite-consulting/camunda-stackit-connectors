@@ -212,9 +212,10 @@ touches four things together:
 3. `camunda.engine.version.range` in the root pom
 4. `engineVersion` in every `@ElementTemplate` annotation
 
-Renovate groups all `io.camunda.connector:*` updates into a single PR for this reason, but it
-cannot edit the annotations — those PRs always need a manual follow-up commit, and the
-element-template drift check in CI will catch it if you forget.
+Dependabot (`.github/dependabot.yml`) groups all `io.camunda*` updates into a single PR and
+proposes **patch** releases only: a minor upgrade is a deliberate release-line decision, not a
+dependency bump, and Dependabot could not edit the annotations anyway. Do minor upgrades by hand;
+the element-template drift check in CI catches a forgotten `engineVersion`.
 
 ## Commits and PRs
 

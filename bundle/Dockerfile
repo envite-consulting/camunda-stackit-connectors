@@ -74,7 +74,7 @@ RUN --mount=type=cache,target=/root/.m2/repository \
 #
 # The trade-off is image size - the base alone is ~330 MB uncompressed, where an alpine JRE base is
 # roughly half that - and a larger OS package surface than distroless. Pin the digest here if your
-# supply-chain policy requires it; Renovate keeps the tag itself current.
+# supply-chain policy requires it; Dependabot keeps the tag itself current.
 FROM eclipse-temurin:21-jre
 
 # Unprivileged user. UID/GID 1001 matches camunda/connectors-bundle, so a bind-mounted volume

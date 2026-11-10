@@ -1,0 +1,159 @@
+# Dependabot version updates for camunda-stackit-connectors.
+# Reference: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# Policy
+# ------
+# * One weekly batch (Monday morning, Berlin time) instead of a trickle: every pull request runs
+#   the full gate, including the container-backed integration tests.
+# * Related artifacts move together in one group, so a release train is one pull request.
+# * A cooldown keeps brand-new releases out for a few days - a cheap defence against a
+#   compromised or yanked release. Security updates are not subject to it and arrive as soon as
+#   GitHub publishes an advisory (enable "Dependabot security updates" in the repository
+#   settings).
+# * Commit subjects follow Conventional Commits (`deps: ...`, `deps(actions): ...`), matching
+#   CONTRIBUTING.md.
+#
+# Things Dependabot must NOT do on its own
+# ----------------------------------------
+# * Move the Camunda Connector SDK to a new minor. The SDK minor has to equal the minor of the
+#   connector runtime the connectors are deployed into, and a minor upgrade also needs the
+#   `engineVersion` in every @ElementTemplate, `camunda.engine.version.range`, and regenerated
+#   element templates (see AGENTS.md, "Upgrading Camunda"). Only patch releases are proposed.
+# * Move Jackson to a new minor. Jackson is `provided` by the connector runtime, so the version
+#   compiled against must be the runtime's - see the comment on `version.jackson` in pom.xml.
+# * Move the example's Orchestration Cluster image off the 8.10 line, for the same reason as the
+#   SDK.
+# * Move the JDK base image off Java 21, the version the build targets and CI tests.
+
+version: 2
+
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+    ignore:
+      - dependency-name: "io.camunda*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+      - dependency-name: "com.fasterxml.jackson*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+    groups:
+      # First match wins, so the most specific groups come first.
+      camunda:
+        patterns:
+          - "io.camunda*"
+      aws-sdk:
+        patterns:
+          - "software.amazon.awssdk*"
+      spring-boot:
+        patterns:
+          - "org.springframework.boot*"
+      jackson:
+        patterns:
+          - "com.fasterxml.jackson*"
+      test:
+        patterns:
+          - "org.junit*"
+          - "org.mockito*"
+          - "org.assertj*"
+          - "org.testcontainers*"
+          - "io.floci*"
+          - "org.wiremock*"
+          - "ch.qos.logback*"
+      maven-plugins:
+        patterns:
+          - "org.apache.maven.plugins*"
+          - "org.codehaus.mojo*"
+          - "org.jacoco*"
+          - "org.sonatype.central*"
+          - "com.diffplug.spotless*"
+          - "com.mycila*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: deps(actions)
+    labels:
+      - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /tools
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    commit-message:
+      prefix: deps(tools)
+    labels:
+      - dependencies
+    groups:
+      tools:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /bundle
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: deps(docker)
+    labels:
+      - dependencies
+    ignore:
+      - dependency-name: "eclipse-temurin"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: docker-compose
+    directory: /examples
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: deps(examples)
+    labels:
+      - dependencies
+    ignore:
+      - dependency-name: "camunda/camunda"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor

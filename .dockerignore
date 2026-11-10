@@ -44,7 +44,6 @@ examples/
 **/README.md
 AGENTS.md
 CLAUDE.md
-renovate.json
 
 # The wrapper jar is downloaded by mvnw itself; shipping a stale one into the context is worse
 # than letting the wrapper fetch it.

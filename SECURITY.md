@@ -83,7 +83,7 @@ See
 
 ## Dependencies
 
-Dependencies are updated by Renovate and reviewed on every pull request by
+Dependencies are updated by Dependabot (`.github/dependabot.yml`) and reviewed on every pull request by
 `actions/dependency-review-action`, which fails on high-severity advisories and on licenses
 incompatible with Apache-2.0 redistribution. CodeQL runs on every pull request and on a
 schedule.

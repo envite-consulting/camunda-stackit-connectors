@@ -34,7 +34,7 @@ services:
   # Named volumes are created root-owned, while the Camunda image runs as UID 1001. Without this
   # one-shot chown the Orchestration Cluster cannot create its H2 database file on Linux hosts.
   camunda-data-init:
-    image: camunda/camunda:${CAMUNDA_VERSION}
+    image: camunda/camunda:8.10.9
     user: "0:0"
     entrypoint:
       - /bin/sh
@@ -48,7 +48,7 @@ services:
 
   # The Camunda 8 Orchestration Cluster: Zeebe, Operate and Tasklist in one container since 8.8.
   orchestration:
-    image: camunda/camunda:${CAMUNDA_VERSION}
+    image: camunda/camunda:8.10.9
     container_name: stackit-example-orchestration
     ports:
       # 26500 gRPC (job activation), 8080 REST API + Operate/Tasklist UI, 9600 management.
