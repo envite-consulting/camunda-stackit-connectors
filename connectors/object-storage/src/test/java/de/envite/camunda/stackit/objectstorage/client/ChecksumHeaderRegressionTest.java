@@ -37,14 +37,16 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
- * Proves that the connector never sends a checksum header STACKIT Object Storage cannot accept.
+ * Proves that the connector never sends the checksum headers STACKIT Object Storage documents as
+ * unsupported.
  *
- * <p>This is the single most important test in the module. STACKIT Object Storage is NetApp
- * StorageGRID, whose {@code PutObject} supports only {@code x-amz-checksum-sha256} and explicitly
- * lists {@code x-amz-sdk-checksum-algorithm} and {@code x-amz-trailer} as unsupported. Since 2.30.0
- * the AWS SDK defaults to sending a CRC32 checksum as an {@code aws-chunked} trailer, which breaks
- * multipart uploads against StorageGRID and - far worse - can leave the chunk framing stored inside
- * the object body on a single-part put, with no error anywhere.
+ * <p>STACKIT Object Storage is NetApp StorageGRID, whose {@code PutObject} supports only {@code
+ * x-amz-checksum-sha256} and lists {@code x-amz-sdk-checksum-algorithm} and {@code x-amz-trailer}
+ * as unsupported. Since 2.30.0 the AWS SDK defaults to sending a CRC32 checksum as an {@code
+ * aws-chunked} trailer. Measured on STACKIT {@code eu01}, that trailer is accepted and silently
+ * discarded (see {@code StorageGridChecksumProbeLiveIT} and the compatibility notes, §2.7): no
+ * integrity is gained, and the request rests on vendor-unsupported behaviour. This test pins the
+ * connector to plain requests so that an SDK upgrade cannot quietly change that.
  *
  * <p>The assertions therefore check both the headers and the body bytes, and {@link
  * SdkDefaultRestored} deliberately rebuilds the same client <em>without</em> the workaround to show

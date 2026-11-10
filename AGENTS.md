@@ -94,12 +94,14 @@ Every `S3Client` (and any future `S3AsyncClient`) that talks to STACKIT Object S
 ```
 
 STACKIT Object Storage is NetApp StorageGRID. StorageGRID 11.9 (region `eu01`) and 12.0
-(region `eu02`) support only `x-amz-checksum-sha256` and explicitly reject
-`x-amz-sdk-checksum-algorithm` and `x-amz-trailer`, while AWS SDK for Java v2 ≥ 2.30
-defaults to sending a CRC32 `aws-chunked` trailer. This breaks multipart uploads outright
-and risks silently writing the chunk framing into the object body. There is a regression
-test asserting those headers are absent — if you ever see it fail, do not "fix" it by
-relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
+(region `eu02`) support only `x-amz-checksum-sha256` and list `x-amz-sdk-checksum-algorithm`
+and `x-amz-trailer` as unsupported, while AWS SDK for Java v2 ≥ 2.30 defaults to sending a
+CRC32 `aws-chunked` trailer. Measured on `eu01` (2026-11-10): STACKIT accepts that trailer and
+**discards it** — no corruption, but also no integrity check, so the default buys nothing and
+rests on headers the vendor calls unsupported; `eu02` is unmeasured. Do not switch to the SDK
+default, or add a checksum algorithm, without re-running `StorageGridChecksumProbeLiveIT` in
+both regions. There is a regression test asserting those headers are absent — if you ever see
+it fail, do not "fix" it by relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
 checksum parameters; `ChecksumHeaderRegressionTest$PresignedUpload` pins that, so re-check it
 on SDK upgrades. Full analysis and sources:
 [`docs/stackit-object-storage-compatibility.md`](docs/stackit-object-storage-compatibility.md).

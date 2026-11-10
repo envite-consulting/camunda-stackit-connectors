@@ -2,14 +2,15 @@
 
 **What this is.** STACKIT Object Storage is a NetApp StorageGRID deployment behind an S3-compatible
 façade. That is not a detail — it determines which S3 operations exist, which request headers are
-accepted, and, most importantly, how an AWS SDK must be configured so that uploads do not fail or
-silently corrupt. This document records what was measured and what is documented, with sources, so
+accepted, and how an AWS SDK should be configured — including what its default checksums are
+actually worth here (measured: nothing; §2.7). This document records what was measured and what is documented, with sources, so
 that every connector in this repository configures its S3 client the same way and for stated
 reasons. **Read this before writing any code that talks to `object.storage.*.onstackit.cloud`** —
 in particular §2, which is the one thing that will break a default-configured AWS SDK for Java v2.
 
 Facts that can drift are date-stamped. Direct measurements in this document were taken
-**2026-11-09** against the public endpoints.
+**2026-11-09** against the public endpoints, and **2026-11-10** with real credentials against
+`eu01` (§2.7).
 
 ---
 
@@ -20,7 +21,7 @@ has no checksum settings at all — see §10):
 
 | Setting | Required value | Why |
 | --- | --- | --- |
-| `requestChecksumCalculation` | `WHEN_REQUIRED` | SDK default `WHEN_SUPPORTED` sends a CRC32 `aws-chunked` trailer that StorageGRID 11.9/12.0 do not support (§2) |
+| `requestChecksumCalculation` | `WHEN_REQUIRED` | SDK default `WHEN_SUPPORTED` sends a CRC32 `aws-chunked` trailer over headers StorageGRID 11.9/12.0 document as unsupported. Measured on `eu01`: accepted and stored intact, but the checksum is neither verified nor kept — it protects nothing (§2.7) |
 | `responseChecksumValidation` | `WHEN_REQUIRED` | Avoids validating response checksums the backend may not return (§2) |
 | `endpointOverride` | `https://object.storage.<region>.onstackit.cloud` | No AWS endpoint resolution applies |
 | `region` | `eu01` / `eu02` | Not validated server-side, but keep it honest (§4) |
@@ -143,7 +144,8 @@ the AWS SDK needs in order to send a trailer-based checksum (`x-amz-sdk-checksum
 
 CRC variants arrive only in **12.1**, which is deployed in neither STACKIT region. Even there,
 `x-amz-sdk-checksum-algorithm` and `x-amz-trailer` remain unsupported — so trailer-based checksums
-never work, in any version. 12.1 also notes: *"If a PutObject request doesn't specify a checksum,
+are never honoured, in any version. (Measured on `eu01`: such requests are accepted and the trailer
+is discarded — §2.7.) 12.1 also notes: *"If a PutObject request doesn't specify a checksum,
 StorageGRID doesn't calculate a default CRC-64/NVME checksum for an object."*
 
 ### 2.3 STACKIT ship the workaround themselves
@@ -160,7 +162,7 @@ The same Terraform snippet also sets `skip_credentials_validation`, `skip_region
 
 ### 2.4 NetApp and third-party corroboration
 
-NetApp KB articles documenting hard failures from this exact interaction:
+NetApp KB articles documenting hard failures from this interaction:
 
 - [StorageGRID multipart upload failing in 11.9 with AWS SDK](https://kb.netapp.com/hybrid/StorageGRID/Protocols/StorageGRID_multipart_upload_failing_in_11.9_with_AWS_SDK)
 - [S3 upload with AWS CLI fails with response "bad algorithm checksum"](https://kb.netapp.com/hybrid/StorageGRID/Object_Mgmt/StorageGrid_S3_upload_with_AWS_CLI_fails_with_response__bad_algorithm_checksum)
@@ -175,6 +177,11 @@ Other clients hitting the same wall:
   `aws-chunked` framing and a trailing checksum line *inside the object body* against an
   S3-compatible backend —
   [forum.camunda.io/t/.../66350](https://forum.camunda.io/t/s3-compatible-storage-manifest-write-issue-chunked-transfer-causing-metadata-corruption/66350)
+
+None of these failures reproduced on STACKIT `eu01` for the request shapes the AWS SDK for Java v2
+sends by default for `PutObject` and `UploadPart` (§2.7). The KB articles may concern other shapes —
+for example a checksum algorithm declared on `CreateMultipartUpload`, which the AWS CLI and the S3
+Transfer Manager send — or other 11.9 patch levels; neither was measured.
 
 ### 2.5 Required configuration
 
@@ -218,36 +225,47 @@ checksum"* —
 Adding an MD5-forcing `ExecutionInterceptor` would therefore introduce a failure mode rather than
 remove one.
 
-### 2.7 Open risk: silent corruption, not just failure
+### 2.7 Measured: what STACKIT does with checksums
 
-Every *documented* hard failure above is on `CreateMultipartUpload` / `UploadPart`. For a
-single-part `PutObject` the picture is worse, because StorageGRID accepts `Content-Encoding:
-aws-chunked` and then — verbatim from the 11.9 and 12.0 `PutObject` pages:
+Measured **2026-11-10** against `eu01` (StorageGRID 11.9.0.14) with AWS SDK for Java v2 2.57.12, by
+the opt-in live probe
+[`StorageGridChecksumProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/StorageGridChecksumProbeLiveIT.java).
+The probe records the checksum headers of every request *after signing*, so each row is backed by
+what actually went on the wire, and reads every object back.
 
-> "StorageGRID does not verify the chunk-signature against the chunk data."
->
-> "StorageGRID does not verify the value that you provide for `x-amz-decoded-content-length`
-> against the object."
+| Request (headers as sent) | STACKIT `eu01` |
+| --- | --- |
+| `PutObject`, SDK default: `content-encoding: aws-chunked`, `x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER`, `x-amz-sdk-checksum-algorithm: CRC32`, `x-amz-trailer: x-amz-checksum-crc32` — 43 B and 1 MiB (many chunks) | Accepted, stored **byte for byte**; ETag is the MD5 of the payload; **no checksum stored** |
+| `UploadPart` of a one-part multipart upload, same headers, 1 MiB; then `CompleteMultipartUpload` | Accepted and completed, stored intact; no checksum stored |
+| `PutObject` with an SDK-computed SHA-256 as a **trailer** (`x-amz-trailer: x-amz-checksum-sha256`), 1 MiB | Accepted, stored intact; **no checksum stored** |
+| `PutObject` with a deliberately **wrong** `x-amz-checksum-crc32` **header** | **Accepted and stored** — CRC32 is not verified |
+| `PutObject` with a deliberately **wrong** `x-amz-checksum-sha256` **header** | **Rejected**: `400 BadDigest`, *"The sha256 you specified did not match the calculated checksum."* |
+| `DeleteObjects` with `x-amz-checksum-crc32` and no `Content-MD5` (sent even under `WHEN_REQUIRED`) | Accepted |
+| Connector settings (`WHEN_REQUIRED`): `PutObject` and a one-part multipart upload | `UNSIGNED-PAYLOAD`, no checksum headers; stored intact |
 
-The pages also state: *"Chunked transfer encoding is supported if aws-chunked payload signing is
-also used."*
+What this means:
 
-So a CRC32 trailer on a single-part `PutObject` may be **stored as part of the object body**
-rather than rejected. That is precisely the shape of the Camunda/Zeebe report in §2.4: chunk
-framing and a trailing checksum line ending up inside the stored object. A corrupted object that
-uploads with HTTP 200 is far more dangerous than one that fails.
+- **No corruption and no failure on `eu01`.** StorageGRID decodes `aws-chunked` bodies correctly
+  and then **ignores the trailer**, whatever its algorithm — consistent with NetApp listing
+  `x-amz-trailer` and `x-amz-sdk-checksum-algorithm` as unsupported (§2.2): "unsupported" turns out
+  to mean "accepted and discarded", not "rejected". The silent-corruption scenario this section used
+  to warn about did not occur.
+- **The SDK's default checksum is a false sense of integrity here.** The SDK believes each upload is
+  protected end to end by CRC32; STACKIT neither verifies nor stores the value. The only checksum
+  STACKIT verifies is `x-amz-checksum-sha256` sent as a **header**, which has to be computed before
+  the upload starts.
+- **Why the connector still pins `WHEN_REQUIRED`:** the default buys nothing on STACKIT; it rests on
+  headers the vendor documents as unsupported, so a StorageGRID upgrade may change the behaviour
+  without notice; and `eu02` (12.0) has not been measured. `WHEN_REQUIRED` sends a plain
+  `UNSIGNED-PAYLOAD` request whose behaviour is not in question.
+- **What integrity checking does exist:** TLS in transit, and for single-part uploads without SSE-C
+  an ETag that is the MD5 of the stored bytes (measured), which a client can compare with an MD5 it
+  computed while streaming.
 
-> **Status (2026-11-10): not yet observed.** Whether StorageGRID rejects a default-configured
-> (`WHEN_SUPPORTED`) single-part `PutObject` or stores the chunk framing in the object body has not
-> been measured against a real STACKIT tenant. The opt-in live test
-> [`StorageGridChecksumProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/StorageGridChecksumProbeLiveIT.java)
-> sends exactly that request, reads the object back, and records `REJECTED`, `STORED_INTACT` or
-> `STORED_CORRUPTED` as a `FINDING` in `target/stackit-live-findings.txt`; its next run answers the
-> question for the region it targets (setup:
-> [Testing against real STACKIT](../README.md#testing-against-real-stackit)). Record the result
-> here, once per region. The connector is unaffected either way, because it pins `WHEN_REQUIRED`;
-> until the answer is recorded, treat `WHEN_REQUIRED` as a correctness requirement, not a tuning
-> knob.
+Not yet measured: `eu02`; a checksum algorithm declared on `CreateMultipartUpload` (AWS CLI, S3
+Transfer Manager); whether a corrupted *trailer* is noticed (by analogy with the CRC32 header,
+presumably not). Re-run the probe after every AWS SDK upgrade and in each region
+([Testing against real STACKIT](../README.md#testing-against-real-stackit)).
 
 ---
 
@@ -641,17 +659,18 @@ states:
 > "Any tool, SDK, or library that supports S3, including the AWS CLI, boto3, and s5cmd, works with
 > STACKIT Object Storage […] without modification."
 
-**That claim is false.** An AWS SDK for Java v2 ≥ 2.30.0, or an AWS CLI v2 of comparable vintage,
-at default settings sends a CRC32 `aws-chunked` trailer that StorageGRID 11.9 and 12.0 do not
-support (§2.2), producing either upload failure (§2.4) or possible silent corruption (§2.7).
-STACKIT's own Terraform and Velero examples set `skip_s3_checksum = true` and
-`checksumAlgorithm = ""` precisely because of this (§2.3). Modification is mandatory.
+**That claim is incomplete.** Measured on `eu01`, a default-configured AWS SDK for Java v2 does
+upload and download correctly (§2.7). But at default settings it sends a CRC32 `aws-chunked` trailer
+over headers that StorageGRID 11.9 and 12.0 document as unsupported (§2.2), STACKIT silently
+discards that checksum, NetApp's own knowledge base reports failures for related request shapes
+(§2.4), and STACKIT's own Terraform and Velero examples switch checksums off (§2.3). "Works" is
+true; "without modification and with the integrity guarantees the SDK reports" is not.
 
 Summary of documentation defects found:
 
 | # | Defect | Sources |
 | --- | --- | --- |
-| 1 | "works without modification" is false | [core features](https://docs.stackit.cloud/products/storage/object-storage/basics/core-features-and-use-cases/) vs §2 |
+| 1 | "works without modification" omits that SDK checksums are silently discarded and rely on unsupported headers | [core features](https://docs.stackit.cloud/products/storage/object-storage/basics/core-features-and-use-cases/) vs §2 |
 | 2 | Bucket-name uniqueness: "within a region" vs "within the whole system" | [concepts](https://docs.stackit.cloud/products/storage/object-storage/basics/concepts/) vs [limits](https://docs.stackit.cloud/products/storage/object-storage/reference/limits-object-storage/) |
 | 3 | Compliance-lock endpoint documented at `/v1/...` without region; current spec is `/v2/.../regions/{region}/...` | [Object Lock](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) vs [v2 spec](https://github.com/stackitcloud/stackit-api-specifications/blob/main/services/object-storage/v2/object-storage.json) |
 | 4 | Supported-operations page has no "unsupported" list, so all absences are inference | [supported operations](https://docs.stackit.cloud/products/storage/object-storage/reference/supported-operations-on-buckets-and-objects/) |
@@ -665,13 +684,9 @@ Summary of documentation defects found:
 
 Nothing below has been settled. None of it should be treated as fact.
 
-1. **Silent corruption on single-part `PutObject` (§2.7) — highest priority.** Documented hard
-   failures are all multipart. Because StorageGRID does not verify chunk signatures or
-   `x-amz-decoded-content-length`, a CRC32 trailer may be written into the object body instead of
-   being rejected. **Not yet observed.** The opt-in `StorageGridChecksumProbeLiveIT` performs the
-   test — upload with `WHEN_SUPPORTED`, read back, compare bytes — but has not yet been run; it has
-   to run once per region, and each result belongs in §2.7. Until then, §2.5 is a correctness
-   requirement.
+1. **Checksum behaviour in `eu02` (§2.7).** Measured in `eu01` only (2026-11-10): default SDK
+   checksums are accepted and discarded, no corruption. `eu02` runs StorageGRID 12.0 and needs its
+   own run of `StorageGridChecksumProbeLiveIT`.
 2. **`x-amz-security-token` (§9.2).** Could not be reproduced as `XNotImplemented`; unauthenticated
    probes return `InvalidAccessKeyId` on both regions. Needs a real credential to resolve.
 3. **STS in eu02 (§9.2).** An `AssumeRole` dispatcher demonstrably exists and Lakekeeper uses it,
@@ -692,9 +707,10 @@ Nothing below has been settled. None of it should be treated as fact.
    Is an unbounded key actually accepted, and is there a hidden cap?
 9. **Bucket-name case sensitivity (§8.2).** Are uppercase names genuinely accepted, and if so are
    they addressable?
-10. **Multipart part-size interaction with checksums.** With `WHEN_REQUIRED`, does
-    `CompleteMultipartUpload` still require per-part checksums on 11.9/12.0? The NetApp KB in §2.4
-    suggests multipart is where failures concentrate.
+10. **Multipart with a declared checksum algorithm.** Answered for `eu01` with `WHEN_REQUIRED` and
+    with the SDK default: a one-part multipart upload needs no per-part checksums and completes
+    (§2.7). Still open: `CreateMultipartUpload` with `x-amz-checksum-algorithm`, as the AWS CLI and
+    the S3 Transfer Manager send it — the likely subject of the NetApp KBs in §2.4.
 11. **`SelectObjectContent` and `RestoreObject`.** Listed as supported, but STACKIT offers no
     archive tier, so `RestoreObject` may be a no-op. Neither is exercised by any planned connector.
 12. **Does STACKIT enforce the 2,500 req/s and 500 concurrent-request limits with `503 SlowDown`,**

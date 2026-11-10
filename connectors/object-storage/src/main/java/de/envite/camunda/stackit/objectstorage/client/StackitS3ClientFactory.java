@@ -172,31 +172,30 @@ public class StackitS3ClientFactory {
   }
 
   /**
-   * Turns off the AWS SDK's automatic request checksums, which STACKIT Object Storage cannot
-   * accept.
+   * Turns off the AWS SDK's automatic request checksums, which STACKIT Object Storage discards
+   * unverified.
    *
-   * <p><strong>Do not remove this. It is not a micro-optimisation.</strong>
+   * <p><strong>Do not remove this without re-running {@code StorageGridChecksumProbeLiveIT} in both
+   * STACKIT regions.</strong>
    *
    * <p>STACKIT Object Storage is NetApp StorageGRID (11.9.0.14 in {@code eu01}, 12.0.0.9 in {@code
    * eu02}, as reported by the {@code Server} response header). The StorageGRID S3 API supports
-   * exactly one checksum header on {@code PutObject} — {@code x-amz-checksum-sha256} — and
-   * explicitly lists {@code x-amz-sdk-checksum-algorithm} and {@code x-amz-trailer} as
-   * <em>unsupported</em>.
+   * exactly one checksum header on {@code PutObject} — {@code x-amz-checksum-sha256} — and lists
+   * {@code x-amz-sdk-checksum-algorithm} and {@code x-amz-trailer} as <em>unsupported</em>.
    *
    * <p>From version 2.30.0 the AWS SDK for Java v2 defaults {@code requestChecksumCalculation} to
    * {@code WHEN_SUPPORTED}, which makes it append a CRC32 checksum to every upload as an {@code
-   * aws-chunked} trailer. Against StorageGRID that has two consequences:
+   * aws-chunked} trailer over exactly those headers. Measured against {@code eu01} on 2026-11-10,
+   * StorageGRID accepts such uploads, decodes them correctly and <em>discards</em> the checksum: it
+   * neither stores it nor verifies it, and a deliberately wrong CRC32 is accepted. So the default
+   * produces no corruption, but it also protects nothing while reporting that it does, and it
+   * depends on behaviour the vendor documents as unsupported and may change in any upgrade. {@code
+   * WHEN_REQUIRED} sends a plain {@code UNSIGNED-PAYLOAD} request instead. The measurements are in
+   * {@code docs/stackit-object-storage-compatibility.md}, §2.7.
    *
-   * <ul>
-   *   <li>multipart uploads fail outright, because the trailer headers are rejected;
-   *   <li>single-part uploads can <em>succeed</em> while silently storing the {@code aws-chunked}
-   *       framing bytes as part of the object body — a corrupted object that no error reports.
-   * </ul>
-   *
-   * <p>The second failure mode is why this is set on the builder rather than left to the {@code
-   * AWS_REQUEST_CHECKSUM_CALCULATION} environment variable: a connector must not depend on
-   * process-wide configuration of the runtime it happens to be deployed into, because getting it
-   * wrong corrupts data instead of raising an incident.
+   * <p>This is set on the builder rather than left to the {@code AWS_REQUEST_CHECKSUM_CALCULATION}
+   * environment variable because a connector must not depend on process-wide configuration of the
+   * runtime it happens to be deployed into.
    *
    * <p>STACKIT ship the same workaround in their own material: {@code checksumAlgorithm = ""} in
    * their Velero example, and {@code skip_s3_checksum = true} in the documentation of their

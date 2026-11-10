@@ -455,10 +455,13 @@ a CRC32 checksum as an `aws-chunked` trailer. StorageGRID 11.9/12.0 `PutObject` 
 `x-amz-checksum-sha256` and lists `x-amz-sdk-checksum-algorithm` and `x-amz-trailer` as
 **unsupported**
 ([NetApp StorageGRID 11.9: PutObject](https://docs.netapp.com/us-en/storagegrid-119/s3/put-object.html)).
-Against STACKIT that breaks multipart uploads outright and can leave the chunk framing stored
-*inside* the object body on a single-part put — a corrupted object with no error anywhere. STACKIT
-ship the same workaround themselves (`checksumAlgorithm = ""` in their Velero example,
-`skip_s3_checksum = true` in their Terraform provider guide).
+Measured against STACKIT `eu01` on 2026-11-10, such uploads succeed and are stored intact, but
+STACKIT discards the CRC32 without verifying it — a deliberately wrong CRC32 is accepted, while a
+wrong `x-amz-checksum-sha256` header is rejected with `BadDigest`. The SDK default therefore adds
+no integrity on STACKIT and depends on headers the vendor documents as unsupported, so the
+connector does not use it. STACKIT switch checksums off in their own examples too
+(`checksumAlgorithm = ""` for Velero, `skip_s3_checksum = true` for Terraform). Full measurements:
+[compatibility notes, §2.7](../../docs/stackit-object-storage-compatibility.md#27-measured-what-stackit-does-with-checksums).
 
 This is asserted by `ChecksumHeaderRegressionTest`, which records the request the SDK would put on
 the wire and checks the headers *and* the body bytes. The presigner needs no such setting —
@@ -547,9 +550,12 @@ talk to a real STACKIT bucket:
 
 - `StackitObjectStorageLiveIT` runs the operations end to end through the connector function and
   reads every result back with a separate client.
-- `StorageGridChecksumProbeLiveIT` sends the checksums the AWS SDK sends by default and records how
-  StorageGRID answers — the open question in §2.7 of the compatibility notes. It passes whichever
-  way STACKIT answers and writes `FINDING` lines to `target/stackit-live-findings.txt`.
+- `StorageGridChecksumProbeLiveIT` sends the checksums the AWS SDK sends by default, deliberately
+  wrong CRC32 and SHA-256 checksums, and a one-part multipart upload, and records how StorageGRID
+  answers together with the checksum headers actually sent. It passes whichever way STACKIT answers
+  and writes `FINDING` lines to `target/stackit-live-findings.txt`. The `eu01` results of
+  2026-11-10 are in §2.7 of the compatibility notes; re-run it after AWS SDK upgrades and in
+  `eu02`.
 
 Both are tagged `@Tag("live")`, excluded from every normal build, and run only under the
 `stackit-live` Maven profile, which runs them instead of the container-backed integration tests.

@@ -127,13 +127,15 @@ Since Camunda 8.9 the default environment secret provider prefixes names with `S
 STACKIT Object Storage is **NetApp StorageGRID** behind an S3 façade, and the two regions run
 different StorageGRID versions. That has real consequences for any S3 client:
 
-StorageGRID 11.9 and 12.0 accept only `x-amz-checksum-sha256` and explicitly reject
-`x-amz-sdk-checksum-algorithm` and `x-amz-trailer` — while AWS SDK for Java v2 ≥ 2.30 sends a
-CRC32 `aws-chunked` trailer by default. That combination breaks multipart uploads and can
-silently store the chunk framing inside the object body. STACKIT's documentation never
-mentions checksums and in fact claims any S3 SDK works "without modification"; it does not.
+StorageGRID 11.9 and 12.0 support only `x-amz-checksum-sha256` and list
+`x-amz-sdk-checksum-algorithm` and `x-amz-trailer` as unsupported — while AWS SDK for Java v2
+≥ 2.30 sends a CRC32 `aws-chunked` trailer by default. Measured against `eu01` on 2026-11-10,
+STACKIT accepts such uploads and stores them intact, but **silently discards the checksum**: a
+wrong CRC32 is accepted, only a SHA-256 sent as a header is verified. So a default SDK works, but
+the end-to-end integrity it reports is not real. STACKIT's documentation never mentions
+checksums.
 
-**This connector handles it** — it pins `requestChecksumCalculation` and
+**This connector does not rely on it** — it pins `requestChecksumCalculation` and
 `responseChecksumValidation` to `WHEN_REQUIRED`, with a regression test asserting the headers
 never appear. If you write your own S3 code against STACKIT, read
 [`docs/stackit-object-storage-compatibility.md`](docs/stackit-object-storage-compatibility.md)

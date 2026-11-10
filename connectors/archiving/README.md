@@ -280,10 +280,13 @@ the honest answer is the Archiving Service via the Portal, with a process that k
   mention it. Listed in §6.
 - **Checksums.** Every caveat in
   [`docs/stackit-object-storage-compatibility.md` §2](../../docs/stackit-object-storage-compatibility.md#2-the-checksum-problem)
-  applies, and matters more here: an object written into a WORM bucket with a corrupted body
-  **cannot be corrected or deleted**. Archiving is the use case where the silent-corruption risk in
-  §2.7 of that document is least acceptable, so the empirical test recorded there is a **hard
-  prerequisite** for any Object-Lock-based archiving feature.
+  applies, and matters more here: an object written into a WORM bucket **cannot be corrected or
+  deleted**. Measured on `eu01` (§2.7 of that document), default SDK uploads are stored intact, but
+  STACKIT discards CRC32 and trailer checksums unverified; the one checksum it verifies is
+  `x-amz-checksum-sha256` sent as a header (a mismatch is rejected with `BadDigest`). An archiving
+  write should therefore compute the SHA-256 before uploading and send it as that header, so that
+  STACKIT refuses a damaged body *before* it becomes immutable. Running the probe in `eu02` as well
+  remains a prerequisite.
 - **Keep retention and extension separate.** Writing an object and setting its retention are
   distinct S3 calls. A write that succeeds followed by a retention call that fails leaves an
   unprotected object in a bucket the user believes is WORM. Either use bucket default retention (so
@@ -335,8 +338,9 @@ Every one of these must carry the 365-day ceiling in its element-template docume
 
 1. Keep this directory as a design document with no module (current state).
 2. Implement Shape B as Object Lock operations on the Object Storage connector, once that connector
-   is stable and the §2.7 corruption probe in the compatibility document
-   (`StorageGridChecksumProbeLiveIT`, opt-in) has been run in both regions.
+   is stable and the §2.7 checksum probe in the compatibility document
+   (`StorageGridChecksumProbeLiveIT`, opt-in) has been run in both regions — `eu01` is done
+   (2026-11-10), `eu02` is not.
 3. Revisit Shape A only when §6 Q1 is answered affirmatively.
 
 Rationale: a Marketplace connector named "Archiving" that cannot reach the Archiving Service is
