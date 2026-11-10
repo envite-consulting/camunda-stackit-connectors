@@ -16,7 +16,7 @@ about to write code that talks to STACKIT Object Storage.
 
 | Connector | Status | Notes |
 | --- | --- | --- |
-| [`connectors/object-storage/`](../connectors/object-storage/) | In implementation | Governed by the compatibility document above |
+| [`connectors/object-storage/`](../connectors/object-storage/README.md) | **Implemented** — v1, 8 operations | Governed by the compatibility document above. Operations, error codes and configuration are in its README |
 | [`connectors/archiving/README.md`](../connectors/archiving/README.md) | **Design document — not implemented** | STACKIT Archiving Service has no public API specification. Records the evidence, and the Object Lock path that is implementable today |
 | [`connectors/workflows/README.md`](../connectors/workflows/README.md) | **Design document — not implemented** | STACKIT Workflows is managed Apache Airflow. The STACKIT API is instance-lifecycle only; triggering a DAG means calling the Airflow REST API |
 

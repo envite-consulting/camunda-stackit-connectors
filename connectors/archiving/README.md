@@ -85,7 +85,7 @@ documented way to provision or use it other than the Portal and Support.**
 
 | Check | Result | Verified |
 | --- | --- | --- |
-| [`stackitcloud/stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) | 52 service directories on `main`. **No `archiving`. No `NEAS`.** A code search for "archiving" across the repo returns 2 hits, both in unrelated `pim` specs | 2026-11-09 |
+| [`stackitcloud/stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) | 53 service directories on `main`. **No `archiving`. No `NEAS`.** A code search for "archiving" across the repo returns 2 hits, both in unrelated `pim` specs (`ArchivingSpecificAttributes`, a SKU attribute of the product catalogue) | 2026-11-10 |
 | [Go SDK `services/`](https://github.com/stackitcloud/stackit-sdk-go/tree/main/services) | 48 service modules on `main`. **No `archiving`** (see §3 — it was *removed*) | 2026-11-09 |
 | Python SDK | No archiving module | 2026-11-09 |
 | Java SDK (`cloud.stackit.sdk`) | No archiving artifact | 2026-11-09 |
@@ -222,15 +222,23 @@ Summary:
 | **Per-object legal hold** | **S3 API** | `PutObjectLegalHold`, `GetObjectLegalHold` |
 | Bucket lock configuration | **S3 API** | `PutObjectLockConfiguration`, `GetObjectLockConfiguration` |
 
-The management half is already present in `cloud.stackit.sdk:objectstorage:0.5.0` — the version this
-repository pins — as `RetentionMode`, `SetDefaultRetentionPayload`, `ComplianceLockResponse`,
+The management half is already present in STACKIT's official Java SDK,
+`cloud.stackit.sdk:objectstorage:0.5.0`, as `RetentionMode`, `SetDefaultRetentionPayload`, `ComplianceLockResponse`,
 `DefaultRetentionResponse` and `DeleteDefaultRetentionResponse` (verified 2026-11-09 against the
 published jar). The S3 half is ordinary AWS SDK v2, and STACKIT lists Object Lock configuration,
 retention and legal hold among
 [supported S3 operations](https://docs.stackit.cloud/products/storage/object-storage/reference/supported-operations-on-buckets-and-objects/).
 
-**No new dependency is needed.** An archiving-flavoured capability can be built entirely from what
-the Object Storage connector already brings in.
+**What it would take.** The S3 half — per-object retention, legal hold, bucket lock configuration —
+needs nothing new: it is the AWS SDK the Object Storage connector already uses. The management half
+— project compliance lock, bucket default retention — needs two additions, because the Object
+Storage connector speaks only the S3 data plane with static access keys:
+
+- a client for the management API: `cloud.stackit.sdk:objectstorage` (not a dependency of this
+  repository today) or plain HTTP against the
+  [v2 specification](https://github.com/stackitcloud/stackit-api-specifications/blob/main/services/object-storage/v2/object-storage.json);
+- the service account key flow from [`auth/`](../../auth/README.md), because the management API
+  does not accept S3 access keys.
 
 ### 4.2 365 days is not 6–10 years — say so
 
@@ -327,7 +335,8 @@ Every one of these must carry the 365-day ceiling in its element-template docume
 
 1. Keep this directory as a design document with no module (current state).
 2. Implement Shape B as Object Lock operations on the Object Storage connector, once that connector
-   is stable and the §2.7 corruption test in the compatibility document has been run.
+   is stable and the §2.7 corruption probe in the compatibility document
+   (`StorageGridChecksumProbeLiveIT`, opt-in) has been run in both regions.
 3. Revisit Shape A only when §6 Q1 is answered affirmatively.
 
 Rationale: a Marketplace connector named "Archiving" that cannot reach the Archiving Service is

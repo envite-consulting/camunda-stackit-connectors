@@ -250,9 +250,9 @@ Credentials differ fundamentally from the rest of this repository:
 
 | | Object Storage connector | Workflows connector |
 | --- | --- | --- |
-| Credential | STACKIT service account key, or S3 access key | **Third-party IdP client id + secret** |
+| Credential | S3 access key of a credentials group (v1 speaks only the S3 data plane) | **Third-party IdP client id + secret** |
 | Issuer | STACKIT | The customer's Keycloak / Entra ID / Okta / Cognito |
-| Token endpoint | STACKIT | `https://<idp>/protocol/openid-connect/token` (varies) |
+| Token endpoint | None — every request is signed with AWS SigV4 | `https://<idp>/protocol/openid-connect/token` (varies) |
 | Extra round-trip | — | Token exchange at `POST /api/stackit/v1/session` |
 | Session state | Stateless | **Cookie, with undocumented lifetime** (§7 Q2) |
 

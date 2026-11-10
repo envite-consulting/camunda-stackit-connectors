@@ -15,7 +15,8 @@ Facts that can drift are date-stamped. Direct measurements in this document were
 
 ## 0. The short version
 
-If you only read one thing, it is this. On every `S3Client`, `S3AsyncClient` and `S3Presigner`:
+If you only read one thing, it is this. On every `S3Client` and `S3AsyncClient` (an `S3Presigner`
+has no checksum settings at all — see §10):
 
 | Setting | Required value | Why |
 | --- | --- | --- |
@@ -91,14 +92,24 @@ specification**, not Amazon's:
 
 **This is the headline.** A default-configured AWS SDK for Java v2 ≥ 2.30.0 will send upload
 requests that StorageGRID 11.9 and 12.0 do not support. This repository pins AWS SDK v2
-`2.57.11`, so it is squarely affected.
+`2.57.12` (`version.aws-sdk2` in the root `pom.xml`), so it is squarely affected.
 
 ### 2.1 What the AWS SDK changed
 
-From **2.30.0**, the SDK defaults to "enabling an additional checksum on all Put calls and enabling
-validation on Get calls", switching from MD5 to **CRC32**, transmitted as an `aws-chunked` trailer.
+From **2.30.0**, the SDK defaults to *"enabling an additional checksum on all Put calls and enabling
+validation on Get calls"* (the announcement,
+[aws/aws-sdk-java-v2 discussion #5802](https://github.com/aws/aws-sdk-java-v2/discussions/5802)).
+The algorithm is stated in the release notes — *"The checksum algorithm used by default is CRC32"*
+([`changelogs/2.30.x-CHANGELOG.md`](https://github.com/aws/aws-sdk-java-v2/blob/master/changelogs/2.30.x-CHANGELOG.md),
+2.30.0 entry) — and a maintainer adds in the same discussion that the SDK *"switched to CRC32 from
+MD5"*. Verified 2026-11-10.
 
-- [aws/aws-sdk-java-v2 discussion #5802](https://github.com/aws/aws-sdk-java-v2/discussions/5802)
+Neither source says how the checksum travels. That it is sent as an `aws-chunked` trailer
+(`x-amz-sdk-checksum-algorithm`, `x-amz-trailer`, `Content-Encoding: aws-chunked`) is observed on
+the wire: the `SdkDefaultRestored` case of
+[`ChecksumHeaderRegressionTest`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/client/ChecksumHeaderRegressionTest.java)
+restores the SDK default and asserts exactly those headers and a chunk-framed body.
+
 - Defaults confirmed in SDK source — `SdkSystemSetting.java` documents both settings as
   *"The default value is WHEN_SUPPORTED"*:
   [`core/sdk-core/src/main/java/software/amazon/awssdk/core/SdkSystemSetting.java`](https://github.com/aws/aws-sdk-java-v2/blob/master/core/sdk-core/src/main/java/software/amazon/awssdk/core/SdkSystemSetting.java)
@@ -167,7 +178,8 @@ Other clients hitting the same wall:
 
 ### 2.5 Required configuration
 
-Set this on the builder, explicitly, for every S3 client and presigner:
+Set this on the builder, explicitly, for every `S3Client` and `S3AsyncClient`. (`S3Presigner` offers
+no such setting and needs none — see §10.)
 
 ```java
 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
@@ -225,10 +237,17 @@ rather than rejected. That is precisely the shape of the Camunda/Zeebe report in
 framing and a trailing checksum line ending up inside the stored object. A corrupted object that
 uploads with HTTP 200 is far more dangerous than one that fails.
 
-> **Action required before the connector ships:** empirically verify, against a real STACKIT
-> tenant in **both** regions, that a default-configured (`WHEN_SUPPORTED`) single-part
-> `PutObject` either fails cleanly or is byte-identical on read-back. Record the result here.
-> Until that test exists, treat `WHEN_REQUIRED` as a correctness requirement, not a tuning knob.
+> **Status (2026-11-10): not yet observed.** Whether StorageGRID rejects a default-configured
+> (`WHEN_SUPPORTED`) single-part `PutObject` or stores the chunk framing in the object body has not
+> been measured against a real STACKIT tenant. The opt-in live test
+> [`StorageGridChecksumProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/StorageGridChecksumProbeLiveIT.java)
+> sends exactly that request, reads the object back, and records `REJECTED`, `STORED_INTACT` or
+> `STORED_CORRUPTED` as a `FINDING` in `target/stackit-live-findings.txt`; its next run answers the
+> question for the region it targets (setup:
+> [Testing against real STACKIT](../README.md#testing-against-real-stackit)). Record the result
+> here, once per region. The connector is unaffected either way, because it pins `WHEN_REQUIRED`;
+> until the answer is recorded, treat `WHEN_REQUIRED` as a correctness requirement, not a tuning
+> knob.
 
 ---
 
@@ -423,8 +442,9 @@ This split matters and is easy to get wrong.
 | Per-object legal hold | **S3 API** | `PutObjectLegalHold`, `GetObjectLegalHold` |
 | Bucket lock configuration | **S3 API** | `PutObjectLockConfiguration`, `GetObjectLockConfiguration` |
 
-The management-API half is already available in the Java SDK this repository pins —
-`cloud.stackit.sdk:objectstorage:0.5.0` (latest release, published 2026-10-29) contains
+The management-API half is already available in STACKIT's official Java SDK —
+`cloud.stackit.sdk:objectstorage:0.5.0` (latest release, published 2026-10-29; **not** a dependency
+of this repository) contains
 `RetentionMode`, `SetDefaultRetentionPayload`, `DefaultRetentionResponse`,
 `DeleteDefaultRetentionResponse` and `ComplianceLockResponse` in both its `v1api` and `v2api`
 packages, and `DefaultApi` exposes `createComplianceLock` / `getComplianceLock` /
@@ -596,11 +616,14 @@ Supported and documented for both read and write
 - **No maximum expiry is documented.** Examples use 1 hour. SigV4's protocol ceiling is 7 days —
   treat that as the hard upper bound and default to something much shorter.
 
-> **Presigned PUT and checksums interact.** With `requestChecksumCalculation(WHEN_SUPPORTED)` the
-> presigner bakes a checksum header into `SignedHeaders`. The browser or client that later uses
-> the URL cannot reproduce that header, so the request fails signature validation — a failure that
-> surfaces at the third party, not in the connector. Keep `WHEN_REQUIRED` on `S3Presigner` as well
-> as on `S3Client` (§2.5).
+> **Presigned URLs carry no checksum parameters — keep it that way.** `S3Presigner.Builder` has no
+> `requestChecksumCalculation` or `responseChecksumValidation` setting (verified 2026-11-10 against
+> AWS SDK 2.57.11 and 2.57.12 by inspecting the published `s3` jar), and a presigned `PUT` signs
+> neither `x-amz-sdk-checksum-algorithm` nor `x-amz-trailer`. The `PresignedUpload` case of
+> [`ChecksumHeaderRegressionTest`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/client/ChecksumHeaderRegressionTest.java)
+> pins this. Re-check it on every AWS SDK upgrade: a presigner that signed a checksum header into
+> the URL would make the eventual uploader fail signature validation — a failure that surfaces at
+> the third party, not in the connector.
 
 ---
 
@@ -645,8 +668,10 @@ Nothing below has been settled. None of it should be treated as fact.
 1. **Silent corruption on single-part `PutObject` (§2.7) — highest priority.** Documented hard
    failures are all multipart. Because StorageGRID does not verify chunk signatures or
    `x-amz-decoded-content-length`, a CRC32 trailer may be written into the object body instead of
-   being rejected. **Requires an empirical test against a real tenant in both regions**: upload with
-   `WHEN_SUPPORTED`, read back, compare bytes. Until done, §2.5 is a correctness requirement.
+   being rejected. **Not yet observed.** The opt-in `StorageGridChecksumProbeLiveIT` performs the
+   test — upload with `WHEN_SUPPORTED`, read back, compare bytes — but has not yet been run; it has
+   to run once per region, and each result belongs in §2.7. Until then, §2.5 is a correctness
+   requirement.
 2. **`x-amz-security-token` (§9.2).** Could not be reproduced as `XNotImplemented`; unauthenticated
    probes return `InvalidAccessKeyId` on both regions. Needs a real credential to resolve.
 3. **STS in eu02 (§9.2).** An `AssumeRole` dispatcher demonstrably exists and Lakekeeper uses it,

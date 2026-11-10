@@ -7,8 +7,12 @@ application: one jar, one container, one process.
 ```
 de.envite.camunda.stackit:stackit-connectors-bundle
   -> stackit-connectors-bundle-<version>-with-dependencies.jar
-  -> bundle/Dockerfile -> envite/stackit-connectors:<tag>
+  -> bundle/Dockerfile -> an image you build yourself (tagged envite/stackit-connectors:dev below)
 ```
+
+**No container image is published** - not on Docker Hub, not on any other registry. Build it from
+`bundle/Dockerfile` as shown under [With Docker](#with-docker). CI builds the image on every pull
+request and every push to `main` to prove the Dockerfile still works, but never pushes it.
 
 ## Contents
 
@@ -29,7 +33,7 @@ third-party connector code, so one of them is always required.
 | | What you deploy | Use it when |
 | --- | --- | --- |
 | **1. Mount into Camunda's bundle** | `stackit-connector-<service>-<version>-with-dependencies.jar` mounted into `camunda/connectors-bundle` | You already run `camunda/connectors-bundle` and want STACKIT connectors **next to** Camunda's own HTTP/Kafka/AWS connectors. One runtime, one set of credentials, one thing to monitor. |
-| **2. Run this bundle** | `envite/stackit-connectors` (this module) | You want only STACKIT connectors, or you want them isolated from Camunda's connectors - separate scaling, separate restart blast radius, separate log stream. Also the simplest option when you have no connector runtime yet. |
+| **2. Run this bundle** | An image you build from `bundle/Dockerfile` (this module; not published - see above) | You want only STACKIT connectors, or you want them isolated from Camunda's connectors - separate scaling, separate restart blast radius, separate log stream. Also the simplest option when you have no connector runtime yet. |
 | **3. Camunda 8 Run** | `stackit-connector-<service>-<version>-with-dependencies.jar` dropped into `custom_connectors/` | Local development against the single-process Camunda 8 Run distribution. |
 
 **Prefer option 1 if you already run `camunda/connectors-bundle.`** Running both that image and this
@@ -38,8 +42,10 @@ race for every job, so never deploy the STACKIT connectors twice.
 
 ### Option 1 - mount the shaded jar into `camunda/connectors-bundle`
 
-The mount path differs by target, and getting it wrong produces a runtime that starts cleanly and
-simply never registers the connector.
+Camunda documents a different mount path per target; use the one for yours. (In the 8.10 image
+either path works - its [`start.sh`](https://github.com/camunda/connectors/blob/8.10.5/apps/bundle/default-bundle/start.sh) puts `/opt/app/*` on the
+classpath *and* passes `-Dloader.path=/opt/custom/` - but that is an implementation detail of the
+image, not a documented contract. Verified 2026-11-10 against 8.10.5.)
 
 Self-Managed (the connector lands on the runtime's own classpath):
 
@@ -55,16 +61,36 @@ docker run --rm --name stackit-connector \
   camunda/connectors-bundle:<version>
 ```
 
-Attached to Camunda SaaS (hybrid mode) the path is `/opt/custom/connector.jar` **and**
-`LOADER_PATH` has to point at that directory - see [Hybrid mode](#hybrid-mode-attaching-to-camunda-saas)
-below for the full command.
+Attached to Camunda SaaS (hybrid mode), Camunda's documentation mounts the jar at
+`/opt/custom/connector.jar` and sets `LOADER_PATH=/opt/custom`. The cluster settings are the same as
+for this bundle - [Hybrid mode](#hybrid-mode-attaching-to-camunda-saas) below lists the API client
+scopes they need:
+
+```bash
+docker run --rm --name stackit-connector \
+  -v "$PWD/stackit-connector-object-storage-<version>-with-dependencies.jar:/opt/custom/connector.jar" \
+  -e LOADER_PATH=/opt/custom \
+  -e CAMUNDA_CLIENT_MODE=saas \
+  -e CAMUNDA_CLIENT_CLOUD_CLUSTERID='<cluster id>' \
+  -e CAMUNDA_CLIENT_CLOUD_REGION='<region>' \
+  -e CAMUNDA_CLIENT_AUTH_CLIENTID='<client id>' \
+  -e CAMUNDA_CLIENT_AUTH_CLIENTSECRET='<client secret>' \
+  -e SECRET_STACKIT_S3_ACCESS_KEY='<access key>' \
+  -e SECRET_STACKIT_S3_SECRET_ACCESS_KEY='<secret access key>' \
+  camunda/connectors-bundle:<version>
+```
+
+The shaded jar (about 17 MB for Object Storage) contains the connector, the AWS SDK and the SDK's
+Apache 5 HTTP client. It deliberately leaves out what the runtime already provides - the Connector
+SDK, Jackson, SLF4J - and Netty, which only the unused asynchronous AWS client would need: a second
+copy of any of them next to the runtime's own could shadow it.
 
 Source: [Host custom connectors](https://docs.camunda.io/docs/components/connectors/custom-built-connectors/host-custom-connectors/).
 Note that at the time of writing that page's Self-Managed examples still use the pre-8.8
 `CAMUNDA_CLIENT_BROKER_GATEWAY-ADDRESS`, `CAMUNDA_OPERATE_CLIENT_*` and `CAMUNDA_IDENTITY_*`
 variables. The mount paths are current; the variable names in the snippets above are the 8.8+
 Camunda Spring Boot Starter ones from
-[Use connectors in hybrid mode](https://docs.camunda.io/docs/guides/use-connectors-in-hybrid-mode/)
+[Use connectors in hybrid mode](https://docs.camunda.io/docs/components/connectors/use-connectors-in-hybrid-mode/)
 and the [properties reference](https://docs.camunda.io/docs/apis-tools/camunda-spring-boot-starter/properties-reference/).
 
 ### Option 3 - Camunda 8 Run
@@ -143,7 +169,7 @@ Every setting is a Spring Boot property, so each has an environment-variable for
 | `CAMUNDA_CLIENT_CLOUD_REGION` | `camunda.client.cloud.region` | SaaS cluster region. Required in `saas` mode. | unset |
 | `CAMUNDA_CLIENT_TENANTID` | `camunda.client.tenant-id` | Default tenant for cluster operations. | `<default>` |
 | `CAMUNDA_CLIENT_WORKER_DEFAULTS_TENANTIDS` | `camunda.client.worker.defaults.tenant-ids` | Tenants whose jobs are activated. | `<default>` |
-| `JAVAX_NET_SSL_TRUSTSTORE` / `..._TRUSTSTOREPASSWORD` | - | Custom trust store, for a cluster behind a private CA. | JDK default |
+| `JAVA_TOOL_OPTIONS` | - | Extra JVM options, applied in addition to the image's own. A custom trust store for a cluster behind a private CA goes here: `-Djavax.net.ssl.trustStore=/certs/truststore.jks -Djavax.net.ssl.trustStorePassword=<password>` (mount the file at `/certs`). `JAVAX_NET_SSL_TRUSTSTORE` / `..._TRUSTSTOREPASSWORD` do **not** work on this image: only `camunda/connectors-bundle`'s [`start.sh`](https://github.com/camunda/connectors/blob/8.10.5/apps/bundle/default-bundle/start.sh) translates them, and this image starts with plain `java -jar`. | unset - JDK default trust store |
 
 ### Job workers
 
@@ -208,7 +234,7 @@ Add the module as a dependency of `bundle/pom.xml` and rebuild - the `META-INF/s
 that module does the rest, and `StackitConnectorsApplicationTest` will see it. This image
 deliberately does **not** support a `/opt/custom` drop-in directory: the jar is repackaged with the
 default Spring Boot layout, whose launcher ignores `loader.path`. To drop a jar into a runtime
-without rebuilding, use `camunda/connectors-bundle` with `LOADER_PATH` (option 1 above).
+without rebuilding, use `camunda/connectors-bundle` (option 1 above).
 
 ## Supplying secrets
 
@@ -229,7 +255,9 @@ whose keys are already named `SECRET_...`.
 Two sharp edges:
 
 * **A secret that does not resolve is not an error at startup.** It surfaces as an incident on the
-  first job. If the connector reports an authentication failure, check the variable name first.
+  first job that uses it - *"Secret with name '…' is not available"*, raised by the connector
+  runtime before the connector runs (`SecretNotAvailableException`, Camunda connector runtime
+  8.10.4). Check that the variable is set as `SECRET_<NAME>` in the container's environment.
 * `CAMUNDA_CONNECTOR_SECRETPROVIDER_ENVIRONMENT_PREFIX=` (empty) turns *every* environment variable
   into a readable secret. The runtime logs a warning when you do this. Don't.
 
@@ -257,7 +285,7 @@ connector reaches Camunda SaaS - Camunda-managed SaaS runtimes execute only Camu
 connectors.
 
 Prerequisites, from
-[Use connectors in hybrid mode](https://docs.camunda.io/docs/guides/use-connectors-in-hybrid-mode/):
+[Use connectors in hybrid mode](https://docs.camunda.io/docs/components/connectors/use-connectors-in-hybrid-mode/):
 
 * A client ID / client secret pair with the **Orchestration Cluster REST API** scope.
 * The **Secrets** scope as well, if you want the runtime to read SaaS-managed secrets.

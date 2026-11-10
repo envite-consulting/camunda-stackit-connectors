@@ -51,7 +51,9 @@ $EDITOR .env          # fill in SECRET_STACKIT_S3_ACCESS_KEY and SECRET_STACKIT_
 The two variables are named with a `SECRET_` prefix on purpose: since Camunda 8.9 the connector
 runtime's environment secret provider prepends `SECRET_` to every lookup, so the diagram's
 `{{secrets.STACKIT_S3_ACCESS_KEY}}` resolves from `SECRET_STACKIT_S3_ACCESS_KEY`. Rename one
-without the other and the connector will fail at the first job with an authentication error.
+without the other and the first job fails with an incident reading *"Secret with name '…' is not
+available"* - the connector runtime raises it before the connector runs (`SecretNotAvailableException`,
+Camunda connector runtime 8.10.4).
 
 If your bucket is not called `stackit-connectors-demo`, change the **Bucket** field on the service
 task (step 5) or edit `operation.bucket` in the BPMN file.
@@ -166,7 +168,7 @@ server-side and has no access to your filesystem. Either publish the template to
 organisation's Camunda Hub, or upload the JSON file into the Web Modeler project that contains the
 diagram - it then applies to every diagram in that project. The Hub route is the one that scales to
 several projects; see
-[Camunda Marketplace / connector templates](https://docs.camunda.io/docs/components/modeler/web-modeler/advanced-modeling/manage-connector-templates/).
+[Manage connector templates](https://docs.camunda.io/docs/components/connectors/manage-connector-templates/).
 
 The STACKIT templates need **no** hybrid-mode edit. The `CONNECTOR_<NAME>_TYPE` override that
 Camunda documents for hybrid deployments exists to stop a Camunda-managed SaaS runtime from
@@ -223,9 +225,10 @@ failures, not as startup errors.
 
 | Incident message mentions | Likely cause |
 | --- | --- |
-| `InvalidAccessKeyId`, `SignatureDoesNotMatch`, 403 | Wrong or unresolved credentials. Run `docker compose exec stackit-connectors sh -c 'env \| grep -c SECRET_STACKIT'` - it must print `2`. A missing secret resolves to the literal string `{{secrets.…}}`. |
+| `Secret with name '…' is not available` | The runtime has no `SECRET_<NAME>` variable for a secret the diagram references. Run `docker compose exec stackit-connectors sh -c 'env \| grep -c SECRET_STACKIT'` - it must print `2`. |
+| `InvalidAccessKeyId`, `SignatureDoesNotMatch` (`AUTHENTICATION_FAILED`) | The secrets resolved, but the access key ID and secret do not belong together or the key was deleted. A truncated secret is the usual cause - it is shown only once, at creation. |
 | `NoSuchBucket` | The bucket does not exist in the selected region, or the region is wrong. `eu01` and `eu02` are separate endpoints. |
-| `AccessDenied` on an existing bucket | The credentials group has no permission on this bucket. |
+| `AccessDenied`, 403 (`ACCESS_DENIED`) | The credentials are valid but may not use this bucket: it belongs to another STACKIT project, or a bucket policy denies this credentials group. |
 | no incident, task never starts | No runtime activated the job. Check `docker compose logs stackit-connectors` for the `Starting job worker` line, and make sure no second connector runtime is running (see step 3). |
 
 Raise the log level without a restart:

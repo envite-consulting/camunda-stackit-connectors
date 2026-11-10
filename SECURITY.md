@@ -45,8 +45,11 @@ What we commit to, and what you should verify in a review:
   `toString()`, and error messages name the bucket, key or endpoint rather than the key
   material. If you ever find a credential in a log line or a Camunda incident message, that
   is a vulnerability — report it.
-- **Input is validated** with Jakarta Bean Validation before any request is issued, and the
-  constraints are mirrored into the element template so Modeler rejects bad input early.
+- **Input is validated before any request is issued** — by Jakarta Bean Validation on the bound
+  request, and by the connector itself for rules that can only be checked once FEEL expressions
+  are evaluated (the strict bucket-name rule, the presigned-URL expiry of at most 7 days). Required
+  fields and a lenient bucket-name pattern are also mirrored into the element template, so Modeler
+  flags them early; range limits such as *Max keys* (1–1000) are checked at runtime only.
 - **No obfuscation.** Dependency versions stay detectable by scanners; nothing is shaded in a
   way that hides what we ship.
 
@@ -85,5 +88,5 @@ See
 
 Dependencies are updated by Dependabot (`.github/dependabot.yml`) and reviewed on every pull request by
 `actions/dependency-review-action`, which fails on high-severity advisories and on licenses
-incompatible with Apache-2.0 redistribution. CodeQL runs on every pull request and on a
-schedule.
+incompatible with Apache-2.0 redistribution. CodeQL runs on every pull request, on every
+push to `main`, and weekly.
