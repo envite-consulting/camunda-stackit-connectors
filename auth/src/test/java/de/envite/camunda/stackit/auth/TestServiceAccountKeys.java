@@ -105,12 +105,29 @@ final class TestServiceAccountKeys {
     return keyJson(null, null);
   }
 
+  /** A key file carrying its own private key, no pinned token endpoint, and the given audience. */
+  static String keyJsonWithAudience(final String aud) {
+    return keyJson(privateKeyPem(), null, aud);
+  }
+
+  /**
+   * The PKCS#8 PEM of a <em>different</em> RSA-2048 private key, generated on every call — the
+   * stand-in for a private key that does not belong to the key's {@code kid}.
+   */
+  static String freshPrivateKeyPem() {
+    return pem("PRIVATE KEY", generateKeyPair().getPrivate().getEncoded());
+  }
+
   static String keyJson(final String privateKeyPem, final String tokenEndpoint) {
+    return keyJson(privateKeyPem, tokenEndpoint, AUD);
+  }
+
+  static String keyJson(final String privateKeyPem, final String tokenEndpoint, final String aud) {
     final ObjectNode credentials = MAPPER.createObjectNode();
     credentials.put("kid", KID);
     credentials.put("iss", ISS);
     credentials.put("sub", SUB);
-    credentials.put("aud", AUD);
+    credentials.put("aud", aud);
     if (privateKeyPem != null) {
       credentials.put("privateKey", privateKeyPem);
     }

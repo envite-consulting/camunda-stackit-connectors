@@ -75,8 +75,13 @@ public final class StackitEndpoints {
    *
    * <ol>
    *   <li>the {@code credentials.tokenEndpoint} field of the service account key, if the key
-   *       carries one — a key minted for a specific endpoint has to be used against that endpoint;
-   *   <li>otherwise this documented {@code accounts.stackit.cloud} URL.
+   *       carries one — a key minted for a specific endpoint has to be used against that endpoint.
+   *       It comes from a file the user pastes in, so accept it only as an {@code https} URL on a
+   *       {@code stackit.cloud} host;
+   *   <li>otherwise the endpoint the key's {@code credentials.aud} points at: this URL for keys
+   *       whose audience is {@code https://accounts.stackit.cloud}, {@link
+   *       #SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT} for the older keys with any other audience - which
+   *       is what STACKIT's own SDKs and landing zone do.
    * </ol>
    *
    * @see <a

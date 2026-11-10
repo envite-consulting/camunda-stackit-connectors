@@ -42,7 +42,7 @@ import io.camunda.connector.generator.java.annotation.TemplateDiscriminatorPrope
  *       connector signs a short lived JWT assertion with the private key of the service account and
  *       exchanges it for an access token. This is what new setups should use.
  *   <li>{@link AccessTokenAuthentication} — a long lived service account access token.
- *       <strong>Deprecated by STACKIT</strong>; see that class for the removal date.
+ *       <strong>Deprecated by STACKIT</strong>, past its announced removal date; see that class.
  * </ul>
  *
  * <h2>Keeping credentials out of logs</h2>

@@ -38,8 +38,35 @@ class StackitAuthenticationFactoryTest {
             new ServiceAccountKeyAuthentication(TestServiceAccountKeys.keyJson(), null));
 
     assertThat(provider).isInstanceOf(KeyFlowTokenProvider.class);
+    // The fixture's audience is not accounts.stackit.cloud, so the SDK endpoint is the default.
+    assertThat(((KeyFlowTokenProvider) provider).tokenEndpoint())
+        .isEqualTo(URI.create(StackitEndpoints.SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+  }
+
+  @Test
+  @DisplayName("a key for the accounts.stackit.cloud audience defaults to the documented endpoint")
+  void accountsAudienceUsesDocumentedEndpoint() {
+    final StackitTokenProvider provider =
+        StackitAuthenticationFactory.tokenProvider(
+            new ServiceAccountKeyAuthentication(
+                TestServiceAccountKeys.keyJsonWithAudience("https://accounts.stackit.cloud"),
+                null));
+
     assertThat(((KeyFlowTokenProvider) provider).tokenEndpoint())
         .isEqualTo(URI.create(StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+  }
+
+  @Test
+  @DisplayName("a key without any private key fails at construction, not at the first request")
+  void missingPrivateKeyFailsEagerly() {
+    assertThatThrownBy(() ->
+            StackitAuthenticationFactory.tokenProvider(
+                new ServiceAccountKeyAuthentication(
+                    TestServiceAccountKeys.keyJsonWithoutPrivateKey(), null)))
+        .isInstanceOf(ConnectorException.class)
+        .hasMessageContaining("credentials.privateKey")
+        .extracting(e -> ((ConnectorException) e).getErrorCode())
+        .isEqualTo(StackitErrorCodes.INVALID_INPUT);
   }
 
   @Test

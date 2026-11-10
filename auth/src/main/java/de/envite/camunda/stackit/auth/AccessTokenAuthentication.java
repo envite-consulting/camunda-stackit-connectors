@@ -27,11 +27,12 @@ import jakarta.validation.constraints.NotBlank;
  * as-is.
  *
  * <p><strong>Deprecated by STACKIT, not by this project.</strong> The token flow relies on the
- * {@code service-account.token.creator} role, which STACKIT deprecated on 2025-12-16 and has
- * announced for removal at the end of Q2 2026. After that date a token obtained this way stops
- * working and no new ones can be created. The variant is kept because existing installations hold
- * such tokens and a connector that refuses them outright would break them on upgrade — but migrate
- * to {@link ServiceAccountKeyAuthentication} before the removal date.
+ * {@code service-account.token.creator} role, which STACKIT deprecated on 2025-12-16 and announced
+ * for removal at the end of Q2 2026. That date has passed: treat a token obtained this way as
+ * possibly non-functional, and expect that no new ones can be created. The variant is kept so that
+ * an installation still holding such a token is not broken by a connector upgrade, and so that the
+ * failure, if the token no longer works, is STACKIT's own 401 rather than a missing option — but
+ * use {@link ServiceAccountKeyAuthentication}.
  *
  * <p>Beyond the deadline, the key flow is simply the better option: this token is long lived, so a
  * leak stays exploitable until someone notices and revokes it, and it cannot be rotated without
@@ -48,8 +49,8 @@ import jakarta.validation.constraints.NotBlank;
     label = "Access token (deprecated)",
     description =
         "A long-lived service account access token. Deprecated by STACKIT: the underlying role was "
-            + "deprecated on 2025-12-16 and removal is announced for the end of Q2 2026. Migrate to "
-            + "a service account key.",
+            + "deprecated on 2025-12-16 and its removal was announced for the end of Q2 2026, which "
+            + "has passed, so such a token may no longer work. Use a service account key.",
     keywords = {"token", "bearer", "deprecated", "legacy"})
 public record AccessTokenAuthentication(
     @TemplateProperty(
@@ -58,7 +59,8 @@ public record AccessTokenAuthentication(
             description =
                 "A STACKIT service account access token. Store it as a Camunda secret and reference "
                     + "it here, for example {{secrets.STACKIT_ACCESS_TOKEN}}. Deprecated by "
-                    + "STACKIT: removal is announced for the end of Q2 2026.",
+                    + "STACKIT: removal was announced for the end of Q2 2026, which has passed, so "
+                    + "the token may no longer work. Prefer a service account key.",
             type = TemplateProperty.PropertyType.String,
             feel = FeelMode.optional,
             constraints = @TemplateProperty.PropertyConstraints(notEmpty = true))

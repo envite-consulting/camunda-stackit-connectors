@@ -25,9 +25,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.verification.LoggedRequest;
+import de.envite.camunda.stackit.core.error.StackitErrorCodes;
+import io.camunda.connector.api.error.ConnectorException;
 import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.security.Signature;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -84,6 +92,65 @@ class StackitTokenProviderCacheTest {
         cache.tokenProvider(authentication(), tokenEndpoint(), null);
 
     assertThat(second).isSameAs(first);
+  }
+
+  @Test
+  @DisplayName("a corrected private key for the same kid gets a fresh, working provider")
+  void correctedKeyGetsWorkingProvider() throws Exception {
+    final StackitTokenProviderCache cache = new StackitTokenProviderCache();
+    // First job: a user-provided key pair, with the wrong private key pasted into the separate
+    // input. Parseable, so a provider is built — one that can never obtain a token.
+    final StackitTokenProvider wrong =
+        cache.tokenProvider(
+            new ServiceAccountKeyAuthentication(
+                TestServiceAccountKeys.keyJsonWithoutPrivateKey(),
+                TestServiceAccountKeys.freshPrivateKeyPem()),
+            tokenEndpoint(),
+            null);
+
+    // Next job: the same kid, now with the correct private key.
+    final StackitTokenProvider corrected =
+        cache.tokenProvider(
+            new ServiceAccountKeyAuthentication(
+                TestServiceAccountKeys.keyJsonWithoutPrivateKey(),
+                TestServiceAccountKeys.privateKeyPem()),
+            tokenEndpoint(),
+            null);
+
+    assertThat(corrected).isNotSameAs(wrong);
+    corrected.accessToken();
+    assertThat(exchangeCount()).isEqualTo(1);
+    assertThat(lastAssertionVerifiesAgainstGenuineKey())
+        .as("the corrected provider must sign with the corrected private key")
+        .isTrue();
+  }
+
+  @Test
+  @DisplayName("a key without any private key fails the job and leaves nothing in the cache")
+  void unusableKeyIsNeverCached() {
+    final StackitTokenProviderCache cache = new StackitTokenProviderCache();
+
+    assertThatThrownBy(() ->
+            cache.tokenProvider(
+                new ServiceAccountKeyAuthentication(
+                    TestServiceAccountKeys.keyJsonWithoutPrivateKey(), null),
+                tokenEndpoint(),
+                null))
+        .isInstanceOf(ConnectorException.class)
+        .extracting(e -> ((ConnectorException) e).getErrorCode())
+        .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+    assertThat(cache.size()).isZero();
+
+    // Once the private key is supplied, the same kid works straight away.
+    cache
+        .tokenProvider(
+            new ServiceAccountKeyAuthentication(
+                TestServiceAccountKeys.keyJsonWithoutPrivateKey(),
+                TestServiceAccountKeys.privateKeyPem()),
+            tokenEndpoint(),
+            null)
+        .accessToken();
+    assertThat(exchangeCount()).isEqualTo(1);
   }
 
   @Test
@@ -185,5 +252,24 @@ class StackitTokenProviderCacheTest {
 
   private int exchangeCount() {
     return wireMock.findAll(postRequestedFor(urlEqualTo(TOKEN_PATH))).size();
+  }
+
+  /** Whether the assertion of the most recent token request verifies against the genuine key. */
+  private boolean lastAssertionVerifiesAgainstGenuineKey() throws Exception {
+    final List<LoggedRequest> requests = wireMock.findAll(postRequestedFor(urlEqualTo(TOKEN_PATH)));
+    final String body = requests.get(requests.size() - 1).getBodyAsString();
+    String assertion = null;
+    for (final String pair : body.split("&")) {
+      if (pair.startsWith("assertion=")) {
+        assertion =
+            URLDecoder.decode(pair.substring("assertion=".length()), StandardCharsets.UTF_8);
+      }
+    }
+    assertThat(assertion).as("the token request carries an assertion").isNotNull();
+    final String[] segments = assertion.split("\\.");
+    final Signature verifier = Signature.getInstance("SHA512withRSA");
+    verifier.initVerify(TestServiceAccountKeys.publicKey());
+    verifier.update((segments[0] + '.' + segments[1]).getBytes(StandardCharsets.UTF_8));
+    return verifier.verify(Base64.getUrlDecoder().decode(segments[2]));
   }
 }

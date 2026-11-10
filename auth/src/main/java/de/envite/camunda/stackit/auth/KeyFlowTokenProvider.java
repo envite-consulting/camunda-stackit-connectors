@@ -40,6 +40,8 @@ import java.util.Base64;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -68,10 +70,11 @@ import org.slf4j.LoggerFactory;
  * cloud.stackit.sdk.core.KeyFlowAuthenticator}:
  *
  * <ol>
- *   <li><strong>The token endpoint comes from the key.</strong> The SDK resolves a custom URL, then
- *       the {@code STACKIT_TOKEN_BASEURL} environment variable, then its hard-coded {@code
+ *   <li><strong>The token endpoint comes from the key.</strong> The Java SDK resolves a custom URL,
+ *       then the {@code STACKIT_TOKEN_BASEURL} environment variable, then its hard-coded {@code
  *       service-account.api.stackit.cloud/token} — and never reads {@code
- *       credentials.tokenEndpoint}, which its credentials model does not even expose. See {@link
+ *       credentials.tokenEndpoint}, which its credentials model does not even expose. The Go SDK
+ *       has honoured the field since core v0.26.0, with the same precedence used here. See {@link
  *       StackitServiceAccountKey#resolveTokenEndpoint(URI)}.
  *   <li><strong>The token is attached proactively.</strong> The SDK's authenticator is an OkHttp
  *       {@code Authenticator}, which by design fires only <em>after</em> a 401 — so every single
@@ -83,12 +86,15 @@ import org.slf4j.LoggerFactory;
  * <h2>How long a token is considered good for</h2>
  *
  * <p>From the {@code exp} claim of the returned access token itself, minus a leeway, and
- * <em>not</em> from {@code expires_in}. The three sources disagree: the OpenAPI example says {@code
- * 3600}, the how-to tells you to refresh every 600 seconds, and both official SDKs ignore the field
- * entirely. The token's own {@code exp} is the only one that is authoritative, because it is what
- * the resource servers validate against. The leeway, {@value #DEFAULT_EXPIRY_LEEWAY_SECONDS}
- * seconds by default, absorbs the flight time of the request the token is about to be used on plus
- * modest clock skew.
+ * <em>not</em> from {@code expires_in}. The OpenAPI example says {@code expires_in: 3600}, the
+ * how-to documents no access token lifetime at all (its 600 seconds are the lifetime of the
+ * <em>assertion</em>), and both official SDKs ignore the field in favour of the token's {@code
+ * exp}. The token's own {@code exp} is the only authoritative value, because it is what the
+ * resource servers validate against. The leeway, {@value #DEFAULT_EXPIRY_LEEWAY_SECONDS} seconds by
+ * default, absorbs the flight time of the request the token is about to be used on plus modest
+ * clock skew. Only a token whose {@code exp} cannot be read at all is assumed to be good for
+ * {@value #ASSERTION_LIFETIME_SECONDS} seconds, a conservative guess borrowed from the assertion
+ * lifetime.
  *
  * <h2>No refresh tokens</h2>
  *
@@ -105,9 +111,19 @@ import org.slf4j.LoggerFactory;
  * lock-free read of an {@link AtomicReference} holding the current token and its expiry. When that
  * token is due, exactly one thread performs the exchange under a {@link ReentrantLock} while the
  * others wait and then observe the token it published — rather than every job-worker thread that
- * happened to arrive during the gap firing its own exchange at STACKIT. The waiting threads block
- * for the duration of one HTTP request, which is the price of never sending a thundering herd at
- * the token endpoint.
+ * happened to arrive during the gap firing its own exchange at STACKIT.
+ *
+ * <p>Two rules keep the waiting bounded when the token endpoint is slow or failing:
+ *
+ * <ul>
+ *   <li>A thread waits for the lock at most {@link #REFRESH_LOCK_TIMEOUT} — a little longer than
+ *       one exchange can take — and then fails its job with a retryable {@link
+ *       StackitErrorCodes#CONNECTION_ERROR} instead of queueing indefinitely.
+ *   <li>A thread that waited while another thread's exchange <em>failed</em> reports that same
+ *       failure rather than sending an identical request of its own. Without this, sixteen waiting
+ *       threads would each spend a full request timeout against an endpoint that is down, one after
+ *       the other.
+ * </ul>
  *
  * @see StackitAuthenticationFactory
  * @see <a
@@ -152,8 +168,20 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
   private static final String SIGNATURE_ALGORITHM = "SHA512withRSA";
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
   private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
+  /**
+   * How long a thread waits for another thread's token exchange before it gives up and fails its
+   * job with a retryable error: the connect timeout plus the request timeout plus a little slack,
+   * so a waiter never gives up on an exchange that can still succeed.
+   */
+  public static final Duration REFRESH_LOCK_TIMEOUT =
+      CONNECT_TIMEOUT.plus(REQUEST_TIMEOUT).plusSeconds(5);
+
   private static final Duration DEFAULT_RETRY_BACKOFF = Duration.ofSeconds(5);
   private static final Duration MAX_RETRY_BACKOFF = Duration.ofSeconds(60);
+
+  /** Longest piece of an OAuth error response that is copied into an incident message. */
+  private static final int MAX_ERROR_DETAIL_LENGTH = 200;
 
   private static final Logger LOG = LoggerFactory.getLogger(KeyFlowTokenProvider.class);
 
@@ -163,13 +191,24 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
       JsonMapper.builder().disable(StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION).build();
 
   private final StackitServiceAccountKey key;
+  private final RSAPrivateKey privateKey;
   private final URI tokenEndpoint;
   private final Duration expiryLeeway;
   private final HttpClient httpClient;
   private final Clock clock;
+  private final Duration refreshLockTimeout;
 
   private final AtomicReference<CachedToken> cachedToken = new AtomicReference<>();
   private final ReentrantLock refreshLock = new ReentrantLock();
+
+  /**
+   * How many token exchanges have finished, successfully or not. Read before waiting for the lock,
+   * so that a thread can tell whether an exchange completed while it waited.
+   */
+  private final AtomicLong finishedExchanges = new AtomicLong();
+
+  /** The failure of the most recent exchange, or {@code null} if it succeeded. Guarded by lock. */
+  private RuntimeException lastExchangeFailure;
 
   /**
    * A provider for the given key, posting to the endpoint the key resolves to and using the default
@@ -177,6 +216,9 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
    *
    * @param key the service account key, which must carry a private key; must not be {@code null}
    * @throws NullPointerException if {@code key} is {@code null}
+   * @throws io.camunda.connector.api.error.ConnectorException with error code {@link
+   *     StackitErrorCodes#INVALID_INPUT} if the key carries no usable private key or pins an
+   *     unacceptable token endpoint
    */
   public KeyFlowTokenProvider(final StackitServiceAccountKey key) {
     this(key, null, DEFAULT_EXPIRY_LEEWAY);
@@ -185,6 +227,9 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
   /**
    * A provider with an explicit token endpoint and expiry leeway.
    *
+   * <p>Uses one HTTP client shared by every provider built this way, with a connect timeout and
+   * redirects disabled.
+   *
    * @param key the service account key, which must carry a private key; must not be {@code null}
    * @param tokenEndpointOverride the token endpoint to use instead of the one the key resolves to;
    *     {@code null} to resolve it from the key
@@ -192,12 +237,20 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
    *     #DEFAULT_EXPIRY_LEEWAY}, must not be negative
    * @throws NullPointerException if {@code key} is {@code null}
    * @throws IllegalArgumentException if {@code expiryLeeway} is negative
+   * @throws io.camunda.connector.api.error.ConnectorException with error code {@link
+   *     StackitErrorCodes#INVALID_INPUT} if the key carries no usable private key or pins an
+   *     unacceptable token endpoint
    */
   public KeyFlowTokenProvider(
       final StackitServiceAccountKey key,
       final URI tokenEndpointOverride,
       final Duration expiryLeeway) {
-    this(key, tokenEndpointOverride, expiryLeeway, defaultHttpClient(), Clock.systemUTC());
+    this(
+        key,
+        tokenEndpointOverride,
+        expiryLeeway,
+        DefaultHttpClientHolder.INSTANCE,
+        Clock.systemUTC());
   }
 
   /**
@@ -205,7 +258,8 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
    *
    * <p>This is the constructor to use to share one tuned {@link HttpClient} across connectors, to
    * route the token request through a proxy, or — in a test — to drive expiry from a {@link Clock}
-   * rather than by waiting.
+   * rather than by waiting. A client passed here should not follow redirects: the request body is a
+   * bearer assertion, and a redirect would hand it to whichever host the redirect names.
    *
    * @param key the service account key, which must carry a private key; must not be {@code null}
    * @param tokenEndpointOverride the token endpoint to use instead of the one the key resolves to;
@@ -217,6 +271,9 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
    * @throws NullPointerException if {@code key}, {@code httpClient} or {@code clock} is {@code
    *     null}
    * @throws IllegalArgumentException if {@code expiryLeeway} is negative
+   * @throws io.camunda.connector.api.error.ConnectorException with error code {@link
+   *     StackitErrorCodes#INVALID_INPUT} if the key carries no usable private key or pins an
+   *     unacceptable token endpoint
    */
   public KeyFlowTokenProvider(
       final StackitServiceAccountKey key,
@@ -224,14 +281,34 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
       final Duration expiryLeeway,
       final HttpClient httpClient,
       final Clock clock) {
+    this(key, tokenEndpointOverride, expiryLeeway, httpClient, clock, REFRESH_LOCK_TIMEOUT);
+  }
+
+  /**
+   * As the public five-argument constructor, plus the refresh lock timeout, which tests shorten so
+   * that a timed-out wait can be observed without waiting the real {@link #REFRESH_LOCK_TIMEOUT}.
+   */
+  KeyFlowTokenProvider(
+      final StackitServiceAccountKey key,
+      final URI tokenEndpointOverride,
+      final Duration expiryLeeway,
+      final HttpClient httpClient,
+      final Clock clock,
+      final Duration refreshLockTimeout) {
     this.key = Objects.requireNonNull(key, "key must not be null");
     this.httpClient = Objects.requireNonNull(httpClient, "httpClient must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    this.refreshLockTimeout =
+        Objects.requireNonNull(refreshLockTimeout, "refreshLockTimeout must not be null");
     if (expiryLeeway != null && expiryLeeway.isNegative()) {
       throw new IllegalArgumentException(
           "expiryLeeway must not be negative but was " + expiryLeeway);
     }
     this.expiryLeeway = expiryLeeway == null ? DEFAULT_EXPIRY_LEEWAY : expiryLeeway;
+    // Both resolved here rather than on first use, so that a key that can never work fails the job
+    // that supplied it with a clear INVALID_INPUT, and is never kept in a
+    // StackitTokenProviderCache.
+    this.privateKey = key.privateKey();
     this.tokenEndpoint = key.resolveTokenEndpoint(tokenEndpointOverride);
   }
 
@@ -245,11 +322,17 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
     return tokenEndpoint;
   }
 
+  /** The HTTP client the token requests are sent with; visible for tests. */
+  HttpClient httpClient() {
+    return httpClient;
+  }
+
   /**
    * {@inheritDoc}
    *
    * <p>Answers from the cached token while it is more than the expiry leeway away from its {@code
-   * exp}; otherwise signs a fresh assertion and exchanges it.
+   * exp}; otherwise signs a fresh assertion and exchanges it. See the class documentation for how
+   * concurrent callers share one exchange, and how long they wait for it.
    *
    * @return a currently valid access token, never {@code null} or blank
    */
@@ -259,7 +342,8 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
     if (current != null && current.isUsableAt(clock.instant(), expiryLeeway)) {
       return current.token();
     }
-    refreshLock.lock();
+    final long finishedBeforeWaiting = finishedExchanges.get();
+    acquireRefreshLock();
     try {
       // Another thread may have refreshed while this one waited for the lock; check again so that
       // a burst of job-worker threads produces one exchange rather than one each.
@@ -267,11 +351,52 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
       if (afterWait != null && afterWait.isUsableAt(clock.instant(), expiryLeeway)) {
         return afterWait.token();
       }
-      final CachedToken fresh = exchangeAssertionForToken();
-      cachedToken.set(fresh);
-      return fresh.token();
+      // An exchange finished while this thread waited and it failed: sending the same request
+      // straight away would fail the same way, so report that failure instead.
+      if (lastExchangeFailure != null && finishedExchanges.get() != finishedBeforeWaiting) {
+        throw lastExchangeFailure;
+      }
+      try {
+        final CachedToken fresh = exchangeAssertionForToken();
+        cachedToken.set(fresh);
+        lastExchangeFailure = null;
+        return fresh.token();
+      } catch (final RuntimeException e) {
+        lastExchangeFailure = e;
+        throw e;
+      } finally {
+        finishedExchanges.incrementAndGet();
+      }
     } finally {
       refreshLock.unlock();
+    }
+  }
+
+  private void acquireRefreshLock() {
+    final boolean acquired;
+    try {
+      acquired = refreshLock.tryLock(refreshLockTimeout.toNanos(), TimeUnit.NANOSECONDS);
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw StackitConnectorErrors.retryable(
+          StackitErrorCodes.CONNECTION_ERROR,
+          "Interrupted while waiting for another job's token request to "
+              + tokenEndpoint
+              + " to complete.",
+          e,
+          DEFAULT_RETRY_BACKOFF);
+    }
+    if (!acquired) {
+      throw StackitConnectorErrors.retryable(
+          StackitErrorCodes.CONNECTION_ERROR,
+          "Gave up after "
+              + refreshLockTimeout.toSeconds()
+              + " seconds waiting for another job's token request to "
+              + tokenEndpoint
+              + " to complete. The STACKIT token endpoint is answering slowly or not at all; the "
+              + "job is retried.",
+          null,
+          DEFAULT_RETRY_BACKOFF);
     }
   }
 
@@ -359,7 +484,8 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
               + status
               + detail
               + ". Check that the key is still active in the STACKIT Portal, that it has not "
-              + "expired, and that the private key belongs to it.");
+              + "expired, that the private key belongs to it, and — if the key's id was not "
+              + "found — that the key was issued for this token endpoint.");
     }
     if (StackitConnectorErrors.isRetryableHttpStatus(status)) {
       return StackitConnectorErrors.retryable(
@@ -442,7 +568,7 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
   private Instant fallbackExpiry(final Instant now) {
     LOG.warn(
         "The access token from {} carries no readable 'exp' claim; assuming it is good for {} "
-            + "seconds, the refresh interval the STACKIT documentation prescribes.",
+            + "seconds, the assertion lifetime, since STACKIT documents no access token lifetime.",
         tokenEndpoint,
         ASSERTION_LIFETIME_SECONDS);
     return now.plus(ASSERTION_LIFETIME);
@@ -472,7 +598,6 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
 
   private String signAssertion() {
     final StackitServiceAccountKey.Credentials credentials = key.credentials();
-    final RSAPrivateKey privateKey = key.privateKey();
     final Instant issuedAt = clock.instant();
 
     final ObjectNode header = OBJECT_MAPPER.createObjectNode();
@@ -536,9 +661,15 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
   }
 
   /**
-   * Extracts {@code error} and {@code error_description} from an OAuth error response, and nothing
-   * else. The raw body is never included: it is the answer to a request that carried a bearer
-   * assertion, and it is not worth assuming that whatever answered did not echo it back.
+   * Extracts {@code error} and a description from an error response, and nothing else.
+   *
+   * <p>The description is {@code error_description}, as RFC 6749 names it and as {@code
+   * accounts.stackit.cloud} answers, or failing that {@code message}, which is where {@code
+   * service-account.api.stackit.cloud} puts the useful part — "invalid assertion token", "Key with
+   * kid … was not found" — next to a bare {@code "error": "Bad Request"}. Each field is truncated
+   * to {@value #MAX_ERROR_DETAIL_LENGTH} characters. The raw body is never included: it is the
+   * answer to a request that carried a bearer assertion, and it is not worth assuming that whatever
+   * answered did not echo it back.
    */
   private static String oauthErrorDetail(final String body) {
     if (body == null || body.isBlank()) {
@@ -546,8 +677,11 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
     }
     try {
       final JsonNode root = OBJECT_MAPPER.readTree(body);
-      final String error = textOrNull(root, "error");
-      final String description = textOrNull(root, "error_description");
+      final String error = truncate(textOrNull(root, "error"));
+      final String description =
+          truncate(
+              Optional.ofNullable(textOrNull(root, "error_description"))
+                  .orElseGet(() -> textOrNull(root, "message")));
       if (error == null && description == null) {
         return "";
       }
@@ -568,13 +702,32 @@ public final class KeyFlowTokenProvider implements StackitTokenProvider {
     return node != null && node.isTextual() && !node.asText().isBlank() ? node.asText() : null;
   }
 
-  private static HttpClient defaultHttpClient() {
-    return HttpClient.newBuilder()
-        .connectTimeout(CONNECT_TIMEOUT)
-        // Never follow a redirect: the body of this request is a bearer assertion, and following a
-        // redirect would hand it to whichever host the redirect names.
-        .followRedirects(HttpClient.Redirect.NEVER)
-        .build();
+  private static String truncate(final String value) {
+    if (value == null || value.length() <= MAX_ERROR_DETAIL_LENGTH) {
+      return value;
+    }
+    return value.substring(0, MAX_ERROR_DETAIL_LENGTH) + "…";
+  }
+
+  /**
+   * The HTTP client every provider without an injected one shares.
+   *
+   * <p>One for the whole runtime rather than one per provider: each {@link HttpClient} owns a
+   * selector thread and a connection pool, and a connector that builds a provider per job would
+   * otherwise create both per job. Held in a nested class so that it is only built once a provider
+   * actually needs it.
+   */
+  private static final class DefaultHttpClientHolder {
+
+    static final HttpClient INSTANCE =
+        HttpClient.newBuilder()
+            .connectTimeout(CONNECT_TIMEOUT)
+            // Never follow a redirect: the body of this request is a bearer assertion, and
+            // following a redirect would hand it to whichever host the redirect names.
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+
+    private DefaultHttpClientHolder() {}
   }
 
   /**

@@ -40,7 +40,7 @@ The official STACKIT Java SDK (`cloud.stackit.sdk:core`) ships a key flow in
 `KeyFlowAuthenticator`. This module reimplements it rather than delegating to it, for two concrete
 reasons.
 
-### 1. The SDK ignores `credentials.tokenEndpoint`
+### 1. The Java SDK ignores `credentials.tokenEndpoint`
 
 `KeyFlowAuthenticator` resolves its URL from a custom config URL, then the `STACKIT_TOKEN_BASEURL`
 environment variable, then its hard-coded
@@ -50,11 +50,34 @@ environment variable, then its hard-coded
 only fields are `aud`, `iss`, `kid`, `privateKey` and `sub` — so the value in the key file cannot even
 be read through it.
 
+The **Go SDK does honour the field** since core v0.26.0 ("Added support for custom `TokenEndpoint` in
+service account credentials"): an explicit token URL wins, then `credentials.tokenEndpoint`, then its
+default `https://service-account.api.stackit.cloud/token`. This module follows the same precedence.
+
 This module resolves the endpoint in a defined order:
 
-1. an explicit override passed by the caller;
-2. `credentials.tokenEndpoint` from the key file, **if the key carries one**;
-3. otherwise `https://accounts.stackit.cloud/oauth/v2/token`, the endpoint STACKIT documents.
+1. an explicit override passed by the caller — not validated, because it comes from the connector's
+   configuration rather than from the key;
+2. `credentials.tokenEndpoint` from the key file, **if the key carries one**, after validation (see
+   below);
+3. otherwise a default chosen from `credentials.aud`: `https://accounts.stackit.cloud/oauth/v2/token`
+   for a key whose `aud` is `https://accounts.stackit.cloud`, and
+   `https://service-account.api.stackit.cloud/token` for every other key.
+
+**Why the default depends on `aud`.** A key without `tokenEndpoint` is in practice an older key, and
+older keys carry an older audience such as
+`https://stackit-service-account-prod.apps.01.cf.eu01.stackit.cloud`. Every STACKIT implementation
+sends those to `service-account.api.stackit.cloud/token`: the Go, Java and Python SDKs default to it,
+and STACKIT's own landing zone configurator derives the endpoint from `aud` when the field is
+absent. Only a key minted for the `accounts.stackit.cloud` identity provider belongs at the endpoint
+the how-to documents.
+
+**A key-sourced endpoint is validated.** The assertion posted there is a bearer credential for up to
+ten minutes, so a tampered or mistyped `tokenEndpoint` must not send it in clear text or off STACKIT.
+It has to be an absolute `https` URL without user info whose host is `stackit.cloud` or a subdomain
+of it — a suffix rule rather than an exact list, so that a token endpoint STACKIT adds later does not
+break customers. Anything else fails with `INVALID_INPUT` when the provider is built, before any
+request is sent. STACKIT's landing zone configurator validates the field for the same reason.
 
 **Step 2 is conditional, and that is not an oversight.** What the public sources actually establish:
 
@@ -68,8 +91,9 @@ This module resolves the endpoint in a defined order:
 - STACKIT's "Get an access token" how-to **never mentions it**. Both its Bash and PowerShell scripts
   read only `.credentials.iss`, `.sub`, `.aud`, `.kid` and `.privateKey`, and hard-code
   `https://accounts.stackit.cloud/oauth/v2/token`.
-- No public source states whether the service always fills the field in, nor explains why the
-  documented URL and the SDK default differ.
+- No public source states whether the service always fills the field in. STACKIT's own landing
+  zone configurator treats it as optional too: "Existing older files without `tokenEndpoint` remain
+  supported."
 
 So a key that names an endpoint must be used against it, but a key may legitimately name none.
 Honouring the field when it is present and falling through cleanly when it is not is the only
@@ -175,13 +199,14 @@ message for the same reason.
 A long-lived service account access token, sent as-is.
 
 **STACKIT deprecated this flow, not this project.** The underlying `service-account.token.creator`
-role was deprecated on **2025-12-16**, and removal is announced for the **end of Q2 2026**. After
-that date such tokens stop working and no new ones can be created.
+role was deprecated on **2025-12-16**, and its removal was announced for the **end of Q2 2026**. That
+date has passed: treat such tokens as possibly non-functional, and expect that no new ones can be
+created.
 
-The variant is kept because existing installations hold these tokens and a connector that refused
-them outright would break on upgrade. It is labelled "(deprecated)" in the element template and
-`@Deprecated`-documented in the Javadoc. Migrate to a service account key before the removal date;
-see [STACKIT: Migrate from the token flow][migrate].
+The variant is kept so that an installation still holding such a token is not broken by a connector
+upgrade; if the token no longer works, the failure is STACKIT's own 401. It is labelled
+"(deprecated)" in the element template. Use a service account key instead; see
+[STACKIT: Migrate from the token flow][migrate].
 
 ---
 
@@ -193,12 +218,13 @@ see [STACKIT: Migrate from the token flow][migrate].
   the Go SDK uses 3600 s. The documented value wins.)
 - The token request is `POST application/x-www-form-urlencoded` with
   `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` and `assertion=<signed JWT>`.
-- **`expires_in` is ignored.** The three sources disagree — the OpenAPI example says `3600`, the
-  how-to says refresh every 600 seconds, and both official SDKs ignore the field. The expiry is read
-  from the **`exp` claim of the returned access token itself**, which is what the resource servers
-  validate against, minus a configurable leeway (default **60 s**). If the token is not a JWT and no
-  `exp` can be read, the provider falls back to the documented 600-second refresh interval rather
-  than refusing a token STACKIT just issued.
+- **`expires_in` is ignored.** The OpenAPI example says `3600`, the how-to documents no access token
+  lifetime at all (its 600 seconds are the lifetime of the *assertion*), and both official SDKs read
+  the token's `exp` instead. The expiry is read from the **`exp` claim of the returned access token
+  itself**, which is what the resource servers validate against, minus a configurable leeway
+  (default **60 s**). If the token is not a JWT and no `exp` can be read, the provider assumes 600
+  seconds — a conservative guess borrowed from the assertion lifetime — rather than refusing a token
+  STACKIT just issued.
 - **Refresh tokens are skipped entirely.** The response carries one and it is dropped. The Go SDK
   marks refresh-token renewal deprecated ("Access tokens are going to be refreshed without refresh
   token"), and the how-to simply repeats the JWT exchange. Re-signing is stateless: there is no
@@ -207,6 +233,14 @@ see [STACKIT: Migrate from the token flow][migrate].
 - `KeyFlowTokenProvider` is **thread-safe and free of refresh storms**. The common path is a
   lock-free read of an `AtomicReference` holding `(token, expiresAt)`; when the token is due, exactly
   one thread exchanges under a lock while the others wait and then observe the token it published.
+  The wait is bounded: a thread gives up after `REFRESH_LOCK_TIMEOUT` (45 s, a little more than one
+  exchange can take) with a retryable `CONNECTION_ERROR`, and a thread that waited while another
+  thread's exchange **failed** reports that failure instead of sending an identical request — so an
+  endpoint that is down costs one timeout, not one per waiting job.
+- Providers built without an injected `HttpClient` **share one client** (10 s connect timeout,
+  redirects disabled) instead of each creating its own selector thread and connection pool.
+- The private key and the token endpoint are **validated when the provider is built**, so a key that
+  can never work fails the job that supplied it and is never cached.
 - Redirects are **never followed** on the token request: its body is a bearer assertion, and
   following a redirect would hand that assertion to whichever host the redirect names.
 
@@ -220,7 +254,8 @@ see [STACKIT: Migrate from the token flow][migrate].
 | `IOException` / unreachable endpoint | `CONNECTION_ERROR` | yes |
 | HTTP 200 that is not a token response | `UNEXPECTED_ERROR` | no — names the endpoint and hints at a proxy or captive portal |
 | Access token whose `exp` is already in the past | `AUTHENTICATION_FAILED` | no — points at the runtime's clock, which is the usual cause |
-| Malformed key JSON, missing claim, unusable private key | `INVALID_INPUT` | no |
+| Timed out waiting for another job's token exchange | `CONNECTION_ERROR` | yes |
+| Malformed key JSON, missing claim, unusable private key, unacceptable `credentials.tokenEndpoint` | `INVALID_INPUT` | no |
 
 ---
 
@@ -239,15 +274,19 @@ see [STACKIT: Migrate from the token flow][migrate].
 - **No failure message ever echoes the key JSON back**, not even a fragment, and Jackson's own source
   snippets are suppressed (`StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION`). Whoever reads the
   incident has the key file in front of them, so withholding it costs them nothing.
-- Error responses from the token endpoint are never quoted raw; only the OAuth `error` and
-  `error_description` fields are extracted.
-- `StackitTokenProviderCache` is keyed on the `kid`, the resolved endpoint and the leeway — **never
-  on the key material**, which would otherwise end up in heap dumps and `toString()` output. The
-  consequence is a trust assumption worth stating: because the key material is not part of the cache
-  key, anything presenting a known `kid` receives the provider built for it. Within one connector
-  runtime that is a non-issue — every process definition deployed to it is equally trusted and could
-  read the secret anyway — but **do not share one cache across tenants meant to be isolated**; give
-  each its own.
+- Error responses from the token endpoint are never quoted raw; only `error` and a description are
+  extracted — `error_description` (`accounts.stackit.cloud`) or, failing that, `message`
+  (`service-account.api.stackit.cloud`, which answers `"error": "Bad Request"` and puts the useful
+  part there) — each truncated to 200 characters.
+- A `credentials.tokenEndpoint` from the key file is only used if it is an `https` URL on a
+  `stackit.cloud` host, so a tampered key file cannot send the signed assertion anywhere else.
+- `StackitTokenProviderCache` is keyed on the `kid`, a **SHA-256 fingerprint** of `iss`, `sub`, `aud`
+  and the private key, the resolved endpoint and the leeway — never on the key material itself, which
+  would otherwise end up in heap dumps and `toString()` output. The fingerprint means a corrected key
+  (same `kid`, fixed private key) gets a fresh provider at once instead of the stale one built from the
+  broken input, and that presenting a known `kid` with another private key does not yield the genuine
+  key's token. A cache is still shared state: **do not share one across tenants meant to be
+  isolated**; give each its own.
 
 ---
 
@@ -300,6 +339,24 @@ The test that actually proves the flow is
 `KeyFlowTokenProviderTest.assertionIsCorrectlyFormed`: it decodes the JWT the provider posted and
 checks `alg=RS512`, the `kid` header, every claim, that `exp - iat == 600`, and that the signature
 **verifies against the generated public key** over exactly the transmitted bytes.
+
+### Against real STACKIT
+
+`KeyFlowLiveIT` is tagged `live`, never runs in CI or in a normal `mvn verify`, and only runs with
+the `stackit-live` profile. It is configured through environment variables and skips itself when the
+required ones are missing:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `STACKIT_IT_SERVICE_ACCOUNT_KEY_FILE` | yes | path to a service account key JSON that carries `credentials.privateKey` |
+| `STACKIT_IT_PROJECT_ID` | yes | a project the service account may list Object Storage buckets in |
+| `STACKIT_IT_REGION` | no, default `eu01` | the Object Storage region |
+| `STACKIT_IT_S3_BUCKET` | no | a bucket name that must appear in the listing |
+
+It proves that the key flow yields a JWT access token that is cached, that the token is accepted by
+the Object Storage management API, and that a key signed with the wrong private key is rejected as
+`AUTHENTICATION_FAILED` after exactly one request. It never prints the token, the assertion, the
+private key or the key JSON.
 
 ---
 

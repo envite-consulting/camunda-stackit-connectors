@@ -65,8 +65,8 @@ import jakarta.validation.constraints.NotBlank;
  *     credentials.privateKey}; may be {@code null} or blank
  * @see StackitServiceAccountKey
  * @see <a
- *     href="https://docs.stackit.cloud/platform/access-and-identity/service-accounts/how-tos/create-service-account-keys/">
- *     STACKIT documentation: Create service account keys</a>
+ *     href="https://docs.stackit.cloud/platform/access-and-identity/service-accounts/how-tos/manage-service-account-keys/">
+ *     STACKIT documentation: Manage service account keys</a>
  */
 @TemplateSubType(
     id = ServiceAccountKeyAuthentication.TYPE,

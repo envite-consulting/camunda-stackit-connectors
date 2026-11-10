@@ -27,7 +27,9 @@ import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.spec.InvalidKeySpecException;
@@ -36,6 +38,8 @@ import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -146,6 +150,15 @@ public record StackitServiceAccountKey(
           .disable(StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION)
           .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
           .build();
+
+  /**
+   * The {@code aud} of keys minted for the {@code accounts.stackit.cloud} identity provider, the
+   * only keys for which {@link StackitEndpoints#SERVICE_ACCOUNT_TOKEN_ENDPOINT} is the default.
+   */
+  private static final String ACCOUNTS_AUDIENCE = "https://accounts.stackit.cloud";
+
+  /** The domain every STACKIT token endpoint a key may name has to belong to. */
+  private static final String STACKIT_DOMAIN = "stackit.cloud";
 
   private static final String PKCS8_BEGIN = "-----BEGIN PRIVATE KEY-----";
   private static final String PKCS8_END = "-----END PRIVATE KEY-----";
@@ -304,30 +317,48 @@ public record StackitServiceAccountKey(
    *
    * <ol>
    *   <li>{@code override}, when one is given — an operator who points the connector somewhere else
-   *       means it;
-   *   <li>{@code credentials.tokenEndpoint} from the key, <em>if the key carries one</em>. The
-   *       STACKIT API specification describes it as "Endpoint used to obtain access tokens for the
-   *       service account", so a key that names one has to be used against it;
-   *   <li>otherwise {@link StackitEndpoints#SERVICE_ACCOUNT_TOKEN_ENDPOINT}, the endpoint STACKIT
-   *       documents.
+   *       means it. The override is deliberately not validated: it comes from the connector's own
+   *       configuration, not from the key, and a test or a proxy setup legitimately points it at a
+   *       non-STACKIT host;
+   *   <li>{@code credentials.tokenEndpoint} from the key, <em>if the key carries one</em>, after
+   *       validation (see below). The STACKIT API specification describes it as "Endpoint used to
+   *       obtain access tokens for the service account", so a key that names one has to be used
+   *       against it;
+   *   <li>otherwise a default chosen from {@code credentials.aud}: {@link
+   *       StackitEndpoints#SERVICE_ACCOUNT_TOKEN_ENDPOINT} for a key whose audience is {@code
+   *       https://accounts.stackit.cloud}, and {@link
+   *       StackitEndpoints#SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT} for every other key.
    * </ol>
    *
-   * <p><strong>Step two is conditional, and that is not an oversight.</strong> The field sits in
-   * the {@code credentials} object of the create-key response in the service-account OpenAPI
-   * specification, but it is not in that schema's {@code required} list, and it is absent from the
-   * get-key response schema altogether. STACKIT's own "Get an access token" how-to never mentions
-   * it and hard-codes {@link StackitEndpoints#SERVICE_ACCOUNT_TOKEN_ENDPOINT}, while the official
-   * Java SDK resolves a custom URL, then the {@code STACKIT_TOKEN_BASEURL} environment variable,
-   * then its own hard-coded {@link StackitEndpoints#SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT} — and never
-   * reads the field at all. Whether the service always fills it in is therefore not established by
-   * any public source. Honouring it when present and falling through cleanly when it is not is the
-   * only behaviour that is correct under either reading.
+   * <h4>Why the default depends on the audience</h4>
+   *
+   * <p>A key without {@code tokenEndpoint} is in practice an older key, and older keys carry an
+   * older audience such as {@code
+   * https://stackit-service-account-prod.apps.01.cf.eu01.stackit.cloud}. Every STACKIT
+   * implementation routes those to {@code service-account.api.stackit.cloud/token}: the Go, Java
+   * and Python SDKs all default to it, and STACKIT's own landing zone configurator derives the
+   * endpoint from {@code aud} when the field is absent. Only a key minted for the newer {@code
+   * accounts.stackit.cloud} identity provider — recognisable by that audience — belongs at the
+   * endpoint the "Get an access token" how-to documents.
+   *
+   * <h4>Why a key-sourced endpoint is validated</h4>
+   *
+   * <p>The assertion posted there is a bearer credential for up to ten minutes. A key file whose
+   * {@code tokenEndpoint} was tampered with, or simply mistyped, must not be able to send it in
+   * clear text or to a host outside STACKIT. The field therefore has to be an absolute {@code
+   * https} URL, without user info, whose host is {@code stackit.cloud} or a subdomain of it. A
+   * suffix rule rather than an exact list, so that a token endpoint STACKIT introduces later does
+   * not break customers whose new keys name it. STACKIT's own landing zone configurator validates
+   * the field for the same reason.
    *
    * @param override the endpoint to use regardless of what the key says; may be {@code null}
    * @return the token endpoint to post the assertion to, never {@code null}
    * @throws io.camunda.connector.api.error.ConnectorException with error code {@link
-   *     StackitErrorCodes#INVALID_INPUT} if the key pins a {@code tokenEndpoint} that is not a
-   *     valid absolute URI
+   *     StackitErrorCodes#INVALID_INPUT} if no override is given and the key pins a {@code
+   *     tokenEndpoint} that is not an absolute {@code https} URL on a {@code stackit.cloud} host
+   * @see <a
+   *     href="https://github.com/stackitcloud/stackit-sdk-go/blob/main/core/clients/key_flow.go">
+   *     STACKIT Go SDK: key flow, which reads {@code tokenEndpoint} since core v0.26.0</a>
    */
   public URI resolveTokenEndpoint(final URI override) {
     if (override != null) {
@@ -335,29 +366,96 @@ public record StackitServiceAccountKey(
     }
     final String pinned = credentials == null ? null : credentials.tokenEndpoint();
     if (isBlank(pinned)) {
-      return URI.create(StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT);
+      return defaultTokenEndpoint();
     }
-    final String trimmed = pinned.trim();
+    return validatedTokenEndpoint(pinned.trim());
+  }
+
+  /**
+   * A SHA-256 fingerprint of everything that decides whether this key can obtain a token: the
+   * {@code iss}, {@code sub} and {@code aud} claims and the private key.
+   *
+   * <p>Used by {@link StackitTokenProviderCache} so that a corrected key — same {@code kid}, fixed
+   * private key — gets a fresh provider rather than the stale one built from the broken input. The
+   * fingerprint is a one-way hash, so it is safe in a map key where the private key itself would
+   * not be.
+   *
+   * @return the lower-case hex SHA-256 fingerprint, never {@code null}
+   */
+  String credentialFingerprint() {
+    final Credentials source = credentials == null ? emptyCredentials() : credentials;
+    // NUL cannot occur in any of the fields, so the concatenation is unambiguous.
+    final String material =
+        String.join(
+            "\u0000",
+            Objects.toString(source.iss(), ""),
+            Objects.toString(source.sub(), ""),
+            Objects.toString(source.aud(), ""),
+            Objects.toString(source.privateKey(), ""));
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256")
+                  .digest(material.getBytes(StandardCharsets.UTF_8)));
+    } catch (final NoSuchAlgorithmException e) {
+      // Cannot happen: every JRE is required to provide SHA-256.
+      throw new IllegalStateException("This Java runtime provides no SHA-256", e);
+    }
+  }
+
+  private URI defaultTokenEndpoint() {
+    final String aud = credentials == null ? null : credentials.aud();
+    final boolean accountsAudience =
+        aud != null && ACCOUNTS_AUDIENCE.equalsIgnoreCase(stripTrailingSlashes(aud.trim()));
+    return URI.create(
+        accountsAudience
+            ? StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT
+            : StackitEndpoints.SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT);
+  }
+
+  private static URI validatedTokenEndpoint(final String pinned) {
     final URI uri;
     try {
-      uri = new URI(trimmed);
+      uri = new URI(pinned);
     } catch (final URISyntaxException e) {
-      throw StackitConnectorErrors.fatal(
-          StackitErrorCodes.INVALID_INPUT,
-          "The 'credentials.tokenEndpoint' of the STACKIT service account key is not a valid URI: '"
-              + trimmed
-              + "'.",
-          e);
+      throw invalidTokenEndpoint(pinned, "it is not a valid URI", e);
     }
-    if (!uri.isAbsolute()) {
-      throw StackitConnectorErrors.fatal(
-          StackitErrorCodes.INVALID_INPUT,
-          "The 'credentials.tokenEndpoint' of the STACKIT service account key must be an absolute "
-              + "https URL but was '"
-              + trimmed
-              + "'.");
+    if (!uri.isAbsolute() || !"https".equalsIgnoreCase(uri.getScheme())) {
+      throw invalidTokenEndpoint(pinned, "it is not an absolute https URL", null);
+    }
+    final String host = uri.getHost();
+    if (host == null || uri.getRawUserInfo() != null) {
+      throw invalidTokenEndpoint(pinned, "it names no plain host", null);
+    }
+    final String normalisedHost = host.toLowerCase(Locale.ROOT);
+    if (!normalisedHost.equals(STACKIT_DOMAIN) && !normalisedHost.endsWith("." + STACKIT_DOMAIN)) {
+      throw invalidTokenEndpoint(pinned, "its host is not part of " + STACKIT_DOMAIN, null);
     }
     return uri;
+  }
+
+  private static RuntimeException invalidTokenEndpoint(
+      final String pinned, final String reason, final Throwable cause) {
+    return StackitConnectorErrors.fatal(
+        StackitErrorCodes.INVALID_INPUT,
+        "The 'credentials.tokenEndpoint' of the STACKIT service account key is '"
+            + pinned
+            + "', which is not accepted because "
+            + reason
+            + ". It must be an absolute https URL on a "
+            + STACKIT_DOMAIN
+            + " host, for example "
+            + StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT
+            + ". Download the key file again from the STACKIT Portal and paste it unchanged.",
+        cause);
+  }
+
+  private static String stripTrailingSlashes(final String value) {
+    int end = value.length();
+    while (end > 0 && value.charAt(end - 1) == '/') {
+      end--;
+    }
+    return value.substring(0, end);
   }
 
   /**

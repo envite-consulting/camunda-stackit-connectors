@@ -294,7 +294,18 @@ class StackitServiceAccountKeyTest {
     }
 
     @Test
-    @DisplayName("the key's credentials.tokenEndpoint wins over the documented default")
+    @DisplayName("an explicit override is not validated, so it may point at a local test server")
+    void overrideIsUnrestricted() {
+      final StackitServiceAccountKey key =
+          StackitServiceAccountKey.parse(
+              TestServiceAccountKeys.keyJsonWithTokenEndpoint("http://attacker.example/token"));
+      final URI local = URI.create("http://localhost:8080/oauth/v2/token");
+
+      assertThat(key.resolveTokenEndpoint(local)).isEqualTo(local);
+    }
+
+    @Test
+    @DisplayName("the key's credentials.tokenEndpoint wins over the default")
     void pinnedEndpointBeatsDefault() {
       final StackitServiceAccountKey key =
           StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithTokenEndpoint(PINNED));
@@ -302,18 +313,93 @@ class StackitServiceAccountKeyTest {
       assertThat(key.resolveTokenEndpoint(null)).isEqualTo(URI.create(PINNED));
     }
 
-    @Test
-    @DisplayName("falls back to the documented accounts.stackit.cloud endpoint")
-    void fallsBackToDocumentedDefault() {
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = {
+          "https://accounts.stackit.cloud/oauth/v2/token",
+          "https://service-account.api.stackit.cloud/token",
+          "https://stackit-service-account-prod.apps.01.cf.eu01.stackit.cloud/token",
+          "https://stackit.cloud/token",
+          "HTTPS://Accounts.STACKIT.cloud/oauth/v2/token",
+          "https://accounts.stackit.cloud:443/oauth/v2/token"
+        })
+    @DisplayName("accepts any https endpoint on a stackit.cloud host")
+    void acceptsStackitEndpoints(final String endpoint) {
       final StackitServiceAccountKey key =
-          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson());
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithTokenEndpoint(endpoint));
+
+      assertThat(key.resolveTokenEndpoint(null)).isEqualTo(URI.create(endpoint));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = {
+          "http://accounts.stackit.cloud/oauth/v2/token",
+          "https://accounts.stackit.cloud.attacker.example/oauth/v2/token",
+          "https://attacker.example/token",
+          "https://evilstackit.cloud/token",
+          "https://accounts.stackit.cloud@attacker.example/oauth/v2/token",
+          "https://user@accounts.stackit.cloud/oauth/v2/token",
+          "urn:stackit:token",
+          "file:///etc/passwd",
+          "https:///oauth/v2/token",
+          "/oauth/v2/token",
+          "not a uri at all"
+        })
+    @DisplayName("rejects anything else as INVALID_INPUT, never as a raw IllegalArgumentException")
+    void rejectsUnacceptablePinnedEndpoints(final String endpoint) {
+      final StackitServiceAccountKey key =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithTokenEndpoint(endpoint));
+
+      final ConnectorException thrown =
+          catchConnectorException(() -> key.resolveTokenEndpoint(null));
+
+      assertThat(thrown.getErrorCode()).isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThat(thrown.getMessage())
+          .contains("credentials.tokenEndpoint")
+          .contains("absolute https URL on a stackit.cloud host")
+          .doesNotContain("BEGIN PRIVATE KEY");
+    }
+
+    @Test
+    @DisplayName(
+        "a key for the accounts.stackit.cloud audience defaults to the documented endpoint")
+    void accountsAudienceDefaultsToDocumentedEndpoint() {
+      final StackitServiceAccountKey key =
+          StackitServiceAccountKey.parse(
+              TestServiceAccountKeys.keyJsonWithAudience("https://accounts.stackit.cloud"));
 
       assertThat(key.resolveTokenEndpoint(null))
           .isEqualTo(URI.create(StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT))
           .hasToString("https://accounts.stackit.cloud/oauth/v2/token");
-      // Explicitly not the endpoint the official SDKs hard-code.
+    }
+
+    @Test
+    @DisplayName("the audience comparison tolerates a trailing slash and letter case")
+    void accountsAudienceIsNormalised() {
+      final StackitServiceAccountKey key =
+          StackitServiceAccountKey.parse(
+              TestServiceAccountKeys.keyJsonWithAudience(" HTTPS://accounts.stackit.cloud/ "));
+
       assertThat(key.resolveTokenEndpoint(null))
-          .isNotEqualTo(URI.create(StackitEndpoints.SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+          .isEqualTo(URI.create(StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+    }
+
+    @ParameterizedTest(name = "aud {0}")
+    @ValueSource(
+        strings = {
+          "https://stackit-service-account-prod.apps.01.cf.eu01.stackit.cloud",
+          "https://service-account.api.stackit.cloud",
+          "https://stackit.cloud"
+        })
+    @DisplayName("any other audience defaults to the endpoint the official SDKs use")
+    void otherAudiencesDefaultToSdkEndpoint(final String aud) {
+      final StackitServiceAccountKey key =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithAudience(aud));
+
+      assertThat(key.resolveTokenEndpoint(null))
+          .isEqualTo(URI.create(StackitEndpoints.SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT))
+          .hasToString("https://service-account.api.stackit.cloud/token");
     }
 
     @Test
@@ -323,20 +409,57 @@ class StackitServiceAccountKeyTest {
           StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithTokenEndpoint("   "));
 
       assertThat(key.resolveTokenEndpoint(null))
-          .isEqualTo(URI.create(StackitEndpoints.SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+          .isEqualTo(URI.create(StackitEndpoints.SDK_SERVICE_ACCOUNT_TOKEN_ENDPOINT));
+    }
+  }
+
+  @Nested
+  @DisplayName("credentialFingerprint")
+  class CredentialFingerprint {
+
+    @Test
+    @DisplayName("is stable for the same key")
+    void isStable() {
+      final String first =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson()).credentialFingerprint();
+      final String second =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson()).credentialFingerprint();
+
+      assertThat(first).isEqualTo(second).hasSize(64).matches("[0-9a-f]{64}");
     }
 
     @Test
-    @DisplayName("rejects a relative credentials.tokenEndpoint")
-    void rejectsRelativePinnedEndpoint() {
-      final StackitServiceAccountKey key =
-          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithTokenEndpoint("/token"));
+    @DisplayName("changes with the private key, even when the kid stays the same")
+    void changesWithPrivateKey() {
+      final StackitServiceAccountKey genuine =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson());
+      final StackitServiceAccountKey other =
+          genuine.withPrivateKey(TestServiceAccountKeys.freshPrivateKeyPem());
 
-      final ConnectorException thrown =
-          catchConnectorException(() -> key.resolveTokenEndpoint(null));
+      assertThat(other.credentials().kid()).isEqualTo(genuine.credentials().kid());
+      assertThat(other.credentialFingerprint()).isNotEqualTo(genuine.credentialFingerprint());
+    }
 
-      assertThat(thrown.getErrorCode()).isEqualTo(StackitErrorCodes.INVALID_INPUT);
-      assertThat(thrown.getMessage()).contains("absolute https URL");
+    @Test
+    @DisplayName("changes with the audience")
+    void changesWithAudience() {
+      assertThat(
+              StackitServiceAccountKey.parse(
+                      TestServiceAccountKeys.keyJsonWithAudience("https://accounts.stackit.cloud"))
+                  .credentialFingerprint())
+          .isNotEqualTo(
+              StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson())
+                  .credentialFingerprint());
+    }
+
+    @Test
+    @DisplayName("carries no part of the private key")
+    void carriesNoKeyMaterial() {
+      final String fingerprint =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJson()).credentialFingerprint();
+
+      assertThat(TestServiceAccountKeys.privateKeyPem()).doesNotContain(fingerprint);
+      assertThat(fingerprint).doesNotContain("PRIVATE");
     }
   }
 

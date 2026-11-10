@@ -45,19 +45,25 @@ import java.util.Objects;
  *
  * <h2>What the cache is keyed on</h2>
  *
- * <p>On the {@code kid} of the key, plus the resolved token endpoint and the expiry leeway — never
- * on the key material. A {@code kid} identifies a service account key uniquely within STACKIT and
- * is not itself a secret, so it makes a safe map key, which the private key emphatically would not:
- * map keys end up in heap dumps, in {@code toString()} output, and in the hash of whatever the map
- * is nested inside.
+ * <p>On the {@code kid} of the key, a SHA-256 fingerprint of its {@code iss}, {@code sub}, {@code
+ * aud} and private key, the resolved token endpoint and the expiry leeway — never on the key
+ * material itself. Map keys end up in heap dumps, in {@code toString()} output, and in the hash of
+ * whatever the map is nested inside, which is fine for a {@code kid} and a one-way hash but not for
+ * a private key.
  *
- * <p><strong>The consequence is a trust assumption, and it is worth being explicit about
- * it.</strong> Because the key material is not part of the cache key, anything that presents a
- * known {@code kid} gets the provider — and therefore the token — that was built for it, whatever
- * private key it supplied. Within a single connector runtime that is a non-issue: every process
- * definition deployed to it is equally trusted and could simply read the secret instead. Do not,
- * however, share one cache across tenants that are meant to be isolated from each other; give each
- * its own.
+ * <p>The fingerprint is what makes a <em>corrected</em> key work at once. A key presented with a
+ * missing or wrong private key never yields a working provider, and without the fingerprint every
+ * later job with the same {@code kid} would be handed that stale provider until it was evicted,
+ * however the input had been fixed. It also means that presenting a known {@code kid} with some
+ * other private key gets a separate provider — which cannot obtain a token — rather than the one
+ * built for the genuine key.
+ *
+ * <p>Even so, a cache is shared state: do not share one across tenants that are meant to be
+ * isolated from each other; give each its own.
+ *
+ * <p>A provider is only cached once it has been built, and building one validates the private key
+ * and the token endpoint. A key that cannot work therefore fails the job that supplied it and
+ * leaves nothing behind in the cache.
  *
  * <h2>Thread safety</h2>
  *
@@ -144,7 +150,10 @@ public final class StackitTokenProviderCache {
         expiryLeeway == null ? KeyFlowTokenProvider.DEFAULT_EXPIRY_LEEWAY : expiryLeeway;
     final CacheKey cacheKey =
         new CacheKey(
-            key.credentials().kid(), key.resolveTokenEndpoint(tokenEndpointOverride), leeway);
+            key.credentials().kid(),
+            key.credentialFingerprint(),
+            key.resolveTokenEndpoint(tokenEndpointOverride),
+            leeway);
     synchronized (providers) {
       return providers.computeIfAbsent(
           cacheKey, ignored -> new KeyFlowTokenProvider(key, cacheKey.tokenEndpoint(), leeway));
@@ -191,6 +200,10 @@ public final class StackitTokenProviderCache {
     }
   }
 
-  /** Identifies a cached provider. Deliberately carries no key material; see the class Javadoc. */
-  private record CacheKey(String kid, URI tokenEndpoint, Duration expiryLeeway) {}
+  /**
+   * Identifies a cached provider. Carries a fingerprint of the key material but never the material
+   * itself; see the class Javadoc.
+   */
+  private record CacheKey(
+      String kid, String credentialFingerprint, URI tokenEndpoint, Duration expiryLeeway) {}
 }

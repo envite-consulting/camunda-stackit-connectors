@@ -246,10 +246,11 @@ class KeyFlowTokenProviderTest {
     }
 
     @Test
-    @DisplayName("a token whose exp cannot be read is still usable, for the documented 600 seconds")
+    @DisplayName("a token whose exp cannot be read is still usable, for a conservative 600 seconds")
     void opaqueTokenFallsBackToDocumentedLifetime() {
-      // Not a JWT at all. The provider cannot read an exp, so it falls back to the refresh interval
-      // the STACKIT how-to prescribes rather than refusing a token STACKIT just issued.
+      // Not a JWT at all. The provider cannot read an exp, so it assumes the assertion lifetime —
+      // STACKIT documents no access token lifetime — rather than refusing a token STACKIT just
+      // issued.
       stubToken("an-opaque-token-that-is-not-a-jwt");
       final KeyFlowTokenProvider provider = provider();
 
@@ -304,6 +305,146 @@ class KeyFlowTokenProviderTest {
           .as("a refresh storm would show up here as one request per thread")
           .isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("a caller gives up waiting for a slow exchange with a retryable error")
+    void waitingForASlowExchangeIsBounded() throws Exception {
+      final String token = accessTokenValidFor(Duration.ofHours(1));
+      stubToken(token);
+      final RecordingHttpClient client = RecordingHttpClient.gated(HttpClient.newHttpClient());
+      final KeyFlowTokenProvider provider =
+          new KeyFlowTokenProvider(
+              key(null), tokenEndpoint(), null, client, clock, Duration.ofMillis(200));
+
+      final ExecutorService executor = Executors.newSingleThreadExecutor();
+      try {
+        final Future<String> slow = executor.submit(provider::accessToken);
+        // The first exchange is now in flight and holds the refresh lock.
+        client.awaitFirstRequest();
+
+        assertThatThrownBy(provider::accessToken)
+            .isInstanceOf(ConnectorRetryException.class)
+            .hasMessageContaining("waiting for another job's token request")
+            .extracting(e -> ((ConnectorException) e).getErrorCode())
+            .isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
+
+        client.openGate();
+        assertThat(slow.get(30, TimeUnit.SECONDS)).isEqualTo(token);
+      } finally {
+        client.openGate();
+        executor.shutdownNow();
+      }
+      assertThat(client.sentRequests()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("callers waiting on a failing exchange share its failure instead of repeating it")
+    void waitersShareTheFailureTheyWaitedFor() throws Exception {
+      wireMock.stubFor(post(urlEqualTo(TOKEN_PATH)).willReturn(aResponse().withStatus(503)));
+      final RecordingHttpClient client = RecordingHttpClient.gated(HttpClient.newHttpClient());
+      final KeyFlowTokenProvider provider =
+          new KeyFlowTokenProvider(key(null), tokenEndpoint(), null, client, clock);
+
+      final int waiters = 7;
+      final List<Thread> waiterThreads = new ArrayList<>();
+      final ExecutorService executor =
+          Executors.newFixedThreadPool(
+              waiters + 1,
+              runnable -> {
+                final Thread thread = new Thread(runnable);
+                synchronized (waiterThreads) {
+                  waiterThreads.add(thread);
+                }
+                return thread;
+              });
+      try {
+        final List<Future<String>> results = new ArrayList<>();
+        results.add(executor.submit(provider::accessToken));
+        client.awaitFirstRequest();
+        for (int i = 0; i < waiters; i++) {
+          results.add(executor.submit(provider::accessToken));
+        }
+        // Wait until every other caller is parked on the refresh lock, so that all of them are
+        // genuinely waiting on the exchange that is about to fail. The caller holding the lock is
+        // parked too, at the gate inside send().
+        awaitTimedWaiting(waiterThreads, waiters + 1);
+
+        client.openGate();
+
+        for (final Future<String> result : results) {
+          assertThatThrownBy(() -> result.get(30, TimeUnit.SECONDS))
+              .cause()
+              .isInstanceOf(ConnectorRetryException.class)
+              .extracting(e -> ((ConnectorException) e).getErrorCode())
+              .isEqualTo(StackitErrorCodes.SERVICE_UNAVAILABLE);
+        }
+      } finally {
+        client.openGate();
+        executor.shutdownNow();
+      }
+      assertThat(client.sentRequests())
+          .as("one failing exchange, not one per waiting caller")
+          .isEqualTo(1);
+
+      // A caller arriving afterwards did not wait on that exchange, so it tries again.
+      final String token = accessTokenValidFor(Duration.ofHours(1));
+      wireMock.resetAll();
+      stubToken(token);
+      assertThat(provider.accessToken()).isEqualTo(token);
+      assertThat(client.sentRequests()).isEqualTo(2);
+    }
+  }
+
+  @Nested
+  @DisplayName("construction")
+  class Construction {
+
+    @Test
+    @DisplayName("a key without any private key fails with INVALID_INPUT, before any request")
+    void missingPrivateKeyFailsEagerly() {
+      final StackitServiceAccountKey withoutPrivateKey =
+          StackitServiceAccountKey.parse(TestServiceAccountKeys.keyJsonWithoutPrivateKey());
+
+      assertThatThrownBy(() ->
+              new KeyFlowTokenProvider(
+                  withoutPrivateKey, tokenEndpoint(), null, HttpClient.newHttpClient(), clock))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("credentials.privateKey")
+          .extracting(e -> ((ConnectorException) e).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThat(exchangeCount()).isZero();
+    }
+
+    @Test
+    @DisplayName(
+        "a key with an unreadable private key fails with INVALID_INPUT, before any request")
+    void unreadablePrivateKeyFailsEagerly() {
+      final StackitServiceAccountKey corrupt =
+          StackitServiceAccountKey.parse(
+              TestServiceAccountKeys.keyJson(
+                  "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n", null));
+
+      assertThatThrownBy(() ->
+              new KeyFlowTokenProvider(
+                  corrupt, tokenEndpoint(), null, HttpClient.newHttpClient(), clock))
+          .isInstanceOf(ConnectorException.class)
+          .extracting(e -> ((ConnectorException) e).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThat(exchangeCount()).isZero();
+    }
+
+    @Test
+    @DisplayName(
+        "providers without an injected client share one, with a connect timeout and no redirects")
+    void sharesOneDefaultHttpClient() {
+      final KeyFlowTokenProvider first = new KeyFlowTokenProvider(key(null));
+      final KeyFlowTokenProvider second =
+          new KeyFlowTokenProvider(key(null), tokenEndpoint(), Duration.ofSeconds(30));
+
+      assertThat(first.httpClient()).isSameAs(second.httpClient());
+      assertThat(first.httpClient().connectTimeout()).contains(Duration.ofSeconds(10));
+      assertThat(first.httpClient().followRedirects()).isEqualTo(HttpClient.Redirect.NEVER);
+    }
   }
 
   @Nested
@@ -332,6 +473,63 @@ class KeyFlowTokenProviderTest {
           .hasMessageContaining("key is inactive")
           .extracting(e -> ((ConnectorException) e).getErrorCode())
           .isEqualTo(StackitErrorCodes.AUTHENTICATION_FAILED);
+    }
+
+    @Test
+    @DisplayName("reports the 'message' of service-account.api, which has no error_description")
+    void serviceAccountApiMessageIsReported() {
+      // The shape service-account.api.stackit.cloud actually answers a rejected assertion with.
+      wireMock.stubFor(
+          post(urlEqualTo(TOKEN_PATH))
+              .willReturn(
+                  aResponse()
+                      .withStatus(400)
+                      .withHeader("Content-Type", "application/json")
+                      .withBody(
+                          "{\"error\":\"Bad Request\",\"message\":\"invalid assertion token\","
+                              + "\"path\":\"/token\",\"status\":400}")));
+
+      assertThatThrownBy(provider()::accessToken)
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("(Bad Request: invalid assertion token)")
+          .hasMessageNotContaining("/token\",")
+          .extracting(e -> ((ConnectorException) e).getErrorCode())
+          .isEqualTo(StackitErrorCodes.AUTHENTICATION_FAILED);
+    }
+
+    @Test
+    @DisplayName("prefers error_description over message when both are present")
+    void errorDescriptionWinsOverMessage() {
+      wireMock.stubFor(
+          post(urlEqualTo(TOKEN_PATH))
+              .willReturn(
+                  aResponse()
+                      .withStatus(401)
+                      .withHeader("Content-Type", "application/json")
+                      .withBody(
+                          "{\"error\":\"invalid_grant\",\"error_description\":\"key is inactive\","
+                              + "\"message\":\"something else\"}")));
+
+      assertThatThrownBy(provider()::accessToken)
+          .hasMessageContaining("(invalid_grant: key is inactive)")
+          .hasMessageNotContaining("something else");
+    }
+
+    @Test
+    @DisplayName("truncates an overlong error description")
+    void overlongErrorDetailIsTruncated() {
+      final String longDescription = "x".repeat(1000);
+      wireMock.stubFor(
+          post(urlEqualTo(TOKEN_PATH))
+              .willReturn(
+                  aResponse()
+                      .withStatus(400)
+                      .withHeader("Content-Type", "application/json")
+                      .withBody("{\"message\":\"" + longDescription + "\"}")));
+
+      assertThatThrownBy(provider()::accessToken)
+          .hasMessageContaining("x".repeat(200) + "…")
+          .hasMessageNotContaining("x".repeat(201));
     }
 
     @Test
@@ -471,17 +669,33 @@ class KeyFlowTokenProviderTest {
     @Test
     @DisplayName("posts to the credentials.tokenEndpoint of the key when no override is given")
     void usesPinnedEndpoint() {
-      stubToken(accessTokenValidFor(Duration.ofHours(1)));
+      final String pinnedEndpoint = "https://pinned.api.stackit.cloud/token";
       final StackitServiceAccountKey pinned =
           StackitServiceAccountKey.parse(
-              TestServiceAccountKeys.keyJsonWithTokenEndpoint(tokenEndpoint().toString()));
+              TestServiceAccountKeys.keyJsonWithTokenEndpoint(pinnedEndpoint));
 
       final KeyFlowTokenProvider provider =
           new KeyFlowTokenProvider(pinned, null, null, HttpClient.newHttpClient(), clock);
 
-      assertThat(provider.tokenEndpoint()).isEqualTo(tokenEndpoint());
-      provider.accessToken();
-      assertThat(exchangeCount()).isEqualTo(1);
+      assertThat(provider.tokenEndpoint()).isEqualTo(URI.create(pinnedEndpoint));
+    }
+
+    @Test
+    @DisplayName("a key pinning a non-STACKIT endpoint fails at construction and sends nothing")
+    void pinnedNonStackitEndpointFailsAtConstruction() {
+      // The WireMock endpoint is plain http on localhost: acceptable as an operator override, but
+      // never as an endpoint named by the key file itself.
+      final StackitServiceAccountKey pinned =
+          StackitServiceAccountKey.parse(
+              TestServiceAccountKeys.keyJsonWithTokenEndpoint(tokenEndpoint().toString()));
+
+      assertThatThrownBy(
+              () -> new KeyFlowTokenProvider(pinned, null, null, HttpClient.newHttpClient(), clock))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("credentials.tokenEndpoint")
+          .extracting(e -> ((ConnectorException) e).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThat(exchangeCount()).isZero();
     }
 
     @Test
@@ -574,6 +788,26 @@ class KeyFlowTokenProviderTest {
 
   private int exchangeCount() {
     return wireMock.findAll(postRequestedFor(urlEqualTo(TOKEN_PATH))).size();
+  }
+
+  /** Polls until {@code expected} of {@code threads} are parked in a timed wait. */
+  private static void awaitTimedWaiting(final List<Thread> threads, final int expected)
+      throws InterruptedException {
+    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      final long parked;
+      synchronized (threads) {
+        parked =
+            threads.stream()
+                .filter(thread -> thread.getState() == Thread.State.TIMED_WAITING)
+                .count();
+      }
+      if (parked >= expected) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError("Fewer than " + expected + " threads reached a timed wait");
   }
 
   private Map<String, String> singleRequestForm() {
