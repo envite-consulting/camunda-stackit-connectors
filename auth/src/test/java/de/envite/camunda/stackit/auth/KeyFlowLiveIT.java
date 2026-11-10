@@ -163,11 +163,14 @@ class KeyFlowLiveIT {
                     .build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
+    // An error body names the missing permission and never contains the token, so it is safe -
+    // and the only useful diagnosis - to put into the failure message.
     assertThat(response.statusCode())
         .as(
-            "HTTP status of GET %s (401: token rejected; 403: the service account lacks an "
-                + "Object Storage role in the project)",
-            buckets)
+            "HTTP status of GET %s (401: token rejected; 403: the token is valid but the service"
+                + " account has no role on the project - creating a service account grants none;"
+                + " grant one under IAM and Management > Access, e.g. reader). Response: %s",
+            buckets, truncate(response.body(), 500))
         .isEqualTo(200);
 
     if (bucket != null) {
@@ -209,5 +212,12 @@ class KeyFlowLiveIT {
   private static String environment(final String name) {
     final String value = System.getenv(name);
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private static String truncate(final String text, final int max) {
+    if (text == null) {
+      return "";
+    }
+    return text.length() <= max ? text : text.substring(0, max) + "...";
   }
 }

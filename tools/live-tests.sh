@@ -61,8 +61,11 @@ echo
 rm -f connectors/object-storage/target/stackit-live-findings.txt
 
 # -Dtest=NONE skips the unit tests (surefire) without touching the live tests (failsafe).
-./mvnw -B -Pstackit-live -pl auth,connectors/object-storage -am verify \
-  -Djacoco.skip=true -Dtest=NONE -Dsurefire.failIfNoSpecifiedTests=false "$@"
+# --fail-at-end: a failing auth live test must not stop the Object Storage suite from running;
+# the two modules do not depend on each other.
+status=0
+./mvnw -B -Pstackit-live -pl auth,connectors/object-storage -am verify --fail-at-end \
+  -Djacoco.skip=true -Dtest=NONE -Dsurefire.failIfNoSpecifiedTests=false "$@" || status=$?
 
 findings=connectors/object-storage/target/stackit-live-findings.txt
 if [[ -f "$findings" ]]; then
@@ -70,3 +73,4 @@ if [[ -f "$findings" ]]; then
   echo "Findings (also in $findings):"
   sed 's/^/  /' "$findings"
 fi
+exit "$status"

@@ -233,7 +233,8 @@ These steps follow the [STACKIT documentation](https://docs.stackit.cloud/) as o
    Service accounts → Create service account*; then *IAM and Management → Access → Grant
    access*, give that service account the `reader` role on the project; then open the
    service account, *Service account keys → Create service account key → Create new key
-   pair*, and download the JSON. It contains the private key and cannot be downloaded again.
+   pair*, and download the JSON. Don't skip the role: a service account without one gets valid
+   tokens, but every API answers `403`. It contains the private key and cannot be downloaded again.
    The project ID is the **ID** column in *Resource Manager*.
    ([docs](https://docs.stackit.cloud/platform/access-and-identity/service-accounts/how-tos/manage-service-account-keys/))
 
