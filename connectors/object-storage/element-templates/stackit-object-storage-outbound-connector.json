@@ -60,7 +60,7 @@
       "name" : "authentication.accessKey",
       "type" : "zeebe:input"
     },
-    "tooltip" : "Created in the STACKIT Portal under Object Storage &gt; Credentials. Every credential of a project can read and write every bucket of that project.",
+    "tooltip" : "Created in the STACKIT Portal under Object Storage &gt; Credentials &amp; Groups. By default a credential can read and write every bucket of its project; bucket policies can restrict that.",
     "type" : "String"
   }, {
     "id" : "authentication.secretAccessKey",

@@ -51,8 +51,9 @@ public record StackitObjectStorageAuthentication(
                     + " {{secrets.STACKIT_S3_ACCESS_KEY}} or"
                     + " =camunda.secrets.STACKIT_S3_ACCESS_KEY.",
             tooltip =
-                "Created in the STACKIT Portal under Object Storage &gt; Credentials. Every"
-                    + " credential of a project can read and write every bucket of that project.",
+                "Created in the STACKIT Portal under Object Storage &gt; Credentials &amp; Groups."
+                    + " By default a credential can read and write every bucket of its project;"
+                    + " bucket policies can restrict that.",
             constraints = @TemplateProperty.PropertyConstraints(notEmpty = true))
         @NotBlank(message = "An access key ID is required")
         String accessKey,
