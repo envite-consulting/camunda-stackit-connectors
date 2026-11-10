@@ -41,6 +41,7 @@ import de.envite.camunda.stackit.objectstorage.model.response.PresignedUrlResult
 import de.envite.camunda.stackit.objectstorage.model.response.UploadObjectResult;
 import io.camunda.connector.api.document.Document;
 import io.camunda.connector.api.document.DocumentCreationRequest;
+import io.camunda.connector.api.document.DocumentReference;
 import io.camunda.connector.api.document.DocumentReturn;
 import io.camunda.connector.api.document.DocumentReturnChoice;
 import io.camunda.connector.api.outbound.OutboundConnectorContext;
@@ -49,9 +50,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -92,6 +96,8 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
   private static final Logger LOG = LoggerFactory.getLogger(StackitObjectStorageExecutor.class);
 
   private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
+
+  private static final Pattern SHA256_HEX = Pattern.compile("[0-9a-fA-F]{64}");
 
   private final S3Client s3Client;
   private final Supplier<S3Presigner> presignerFactory;
@@ -178,18 +184,29 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     if (size != null && size >= 0) {
       requestBuilder.contentLength(size);
     }
+    final String checksumSha256 = documentSha256(document);
+    if (checksumSha256 != null) {
+      requestBuilder.checksumSHA256(checksumSha256);
+    }
 
     final String action = "uploading object '" + key + "' to bucket '" + bucket + "'";
     try (InputStream content = size != null && size >= 0 ? document.asInputStream() : null) {
       final RequestBody body = requestBody(document, content, size, contentType);
       final var response = s3Client.putObject(requestBuilder.build(), body);
-      LOG.debug("Uploaded {} bytes to s3://{}/{}", size, bucket, key);
+      LOG.debug(
+          "Uploaded {} bytes to s3://{}/{}, integrity verified: {}",
+          size,
+          bucket,
+          key,
+          checksumSha256 != null);
       return new UploadObjectResult(
           bucket,
           key,
           response.eTag(),
           response.versionId(),
-          response.serverSideEncryptionAsString());
+          response.serverSideEncryptionAsString(),
+          checksumSha256 != null,
+          checksumSha256);
     } catch (final IOException e) {
       throw StackitConnectorErrors.fatal(
           StackitErrorCodes.UNEXPECTED_ERROR,
@@ -543,6 +560,33 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
         "The document to upload reports no size, so the AWS SDK has to buffer it to determine"
             + " Content-Length. Supply a document with known size for large uploads.");
     return RequestBody.fromContentProvider(document::asInputStream, contentType);
+  }
+
+  /**
+   * The SHA-256 the Camunda document store recorded for {@code document}, Base64-encoded as the
+   * {@code x-amz-checksum-sha256} header expects it, or {@code null} if the document carries none.
+   *
+   * <p>Every Camunda document store (in-memory, local storage, AWS, GCP, Azure; Camunda 8.8 to
+   * 8.10) computes the {@code contentHash} of a document as the hex SHA-256 of its content when the
+   * document is created, and checks it again whenever the content is read. Sending it with the
+   * upload makes STACKIT verify that the bytes it receives are exactly the bytes the document store
+   * accepted, and refuse to store anything else with {@code 400 BadDigest}. That is the one
+   * checksum StorageGRID verifies (see the compatibility notes, §2.7); it costs no extra read of
+   * the document, because the hash already exists.
+   *
+   * <p>Inline and external documents have no such hash, and anything that is not 64 hex digits is
+   * ignored rather than trusted: such a document is uploaded unverified, as before.
+   */
+  static String documentSha256(final Document document) {
+    if (!(document.reference()
+        instanceof final DocumentReference.CamundaDocumentReference camundaReference)) {
+      return null;
+    }
+    final String hash = camundaReference.getContentHash();
+    if (hash == null || !SHA256_HEX.matcher(hash).matches()) {
+      return null;
+    }
+    return Base64.getEncoder().encodeToString(HexFormat.of().parseHex(hash));
   }
 
   private static String resolveUploadKey(final UploadObject operation, final Document document) {

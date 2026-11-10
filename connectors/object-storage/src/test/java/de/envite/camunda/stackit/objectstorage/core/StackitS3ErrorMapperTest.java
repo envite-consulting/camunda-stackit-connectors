@@ -245,6 +245,36 @@ class StackitS3ErrorMapperTest {
   }
 
   @Nested
+  @DisplayName("integrity")
+  class Integrity {
+
+    @Test
+    @DisplayName("BadDigest is INTEGRITY_CHECK_FAILED, fatal, and says that nothing was stored")
+    void badDigest() {
+      final RuntimeException mapped =
+          StackitS3ErrorMapper.map(
+              S3Exception.builder()
+                  .statusCode(400)
+                  .awsErrorDetails(
+                      AwsErrorDetails.builder()
+                          .errorCode("BadDigest")
+                          .errorMessage(
+                              "The sha256 you specified did not match the calculated checksum.")
+                          .build())
+                  .build(),
+              ACTION);
+
+      assertThat(mapped)
+          .isInstanceOf(ConnectorException.class)
+          .isNotInstanceOf(ConnectorRetryException.class);
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED);
+      assertThat(mapped)
+          .hasMessageContaining("Nothing was stored")
+          .hasMessageContaining("document store");
+    }
+  }
+
+  @Nested
   @DisplayName("isMissingObject")
   class MissingObject {
 

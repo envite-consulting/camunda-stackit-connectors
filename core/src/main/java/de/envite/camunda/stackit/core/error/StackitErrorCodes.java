@@ -83,6 +83,15 @@ public final class StackitErrorCodes {
   public static final String CONNECTION_ERROR = "CONNECTION_ERROR";
 
   /**
+   * STACKIT refused an upload because the bytes it received do not match the checksum the connector
+   * sent with them. Nothing was stored. For a Camunda document the checksum is the SHA-256 the
+   * document store recorded when the document was created, so a mismatch means the content read
+   * back from the document store is not the content that was stored there. Not retried: corrupted
+   * content needs a human, not another attempt.
+   */
+  public static final String INTEGRITY_CHECK_FAILED = "INTEGRITY_CHECK_FAILED";
+
+  /**
    * A failure that does not map onto any of the other codes. Treat it as a bug report: the message
    * carries the original failure.
    */

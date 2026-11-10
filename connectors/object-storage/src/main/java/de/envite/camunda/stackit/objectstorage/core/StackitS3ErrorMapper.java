@@ -155,6 +155,18 @@ public final class StackitS3ErrorMapper {
     final int status = failure.statusCode();
     final String detail = describe(failure, errorCode, status);
 
+    if ("baddigest".equals(errorCode)) {
+      return StackitConnectorErrors.fatal(
+          StackitErrorCodes.INTEGRITY_CHECK_FAILED,
+          "STACKIT Object Storage refused the content while "
+              + action
+              + " because it does not match the SHA-256 checksum sent with it ("
+              + detail
+              + "). Nothing was stored. The checksum is the one the Camunda document store recorded"
+              + " when the document was created, so the content read back from the document store"
+              + " differs from what was stored there. Check the document store before retrying.",
+          failure);
+    }
     if (NOT_FOUND_CODES.contains(errorCode) || status == 404) {
       return StackitConnectorErrors.fatal(
           StackitErrorCodes.NOT_FOUND,

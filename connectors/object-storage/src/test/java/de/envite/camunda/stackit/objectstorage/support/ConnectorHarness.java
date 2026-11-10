@@ -30,7 +30,6 @@ import io.camunda.connector.api.document.DocumentReturnFormat;
 import io.camunda.connector.jackson.ConnectorsObjectMapperSupplier;
 import io.camunda.connector.runtime.core.document.DocumentFactoryImpl;
 import io.camunda.connector.runtime.core.document.DocumentReturnProcessor;
-import io.camunda.connector.runtime.core.document.store.InMemoryDocumentStore;
 import io.camunda.connector.runtime.test.outbound.OutboundConnectorContextBuilder;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,6 +38,9 @@ import java.util.Map;
  * Drives {@link StackitObjectStorageConnectorFunction} the way the connector runtime does: job
  * variables shaped exactly as the engine sends them, credentials resolved from runtime secrets, and
  * documents held in a real (in-memory) document store.
+ *
+ * <p>Documents live in a {@link ClusterLikeDocumentStore}, so they carry a SHA-256 content hash and
+ * a size exactly as documents from a real Orchestration Cluster do.
  *
  * <p>Shared by the container-backed integration tests and the live tests against STACKIT, so that
  * both exercise the identical path - variable binding, the operation union, the client factory and
@@ -56,8 +58,8 @@ public final class ConnectorHarness {
   private final String endpoint;
   private final String accessKey;
   private final String secretAccessKey;
-  private final DocumentFactoryImpl documentFactory =
-      new DocumentFactoryImpl(InMemoryDocumentStore.INSTANCE);
+  private final ClusterLikeDocumentStore documentStore = new ClusterLikeDocumentStore();
+  private final DocumentFactoryImpl documentFactory = new DocumentFactoryImpl(documentStore);
   private final ObjectMapper objectMapper = ConnectorsObjectMapperSupplier.getCopy();
 
   /**
@@ -75,6 +77,11 @@ public final class ConnectorHarness {
     this.endpoint = endpoint;
     this.accessKey = accessKey;
     this.secretAccessKey = secretAccessKey;
+  }
+
+  /** The document store behind {@link #createDocument}, which behaves like a real cluster's. */
+  public ClusterLikeDocumentStore documentStore() {
+    return documentStore;
   }
 
   /** The same harness, but resolving the secrets to different credentials. */

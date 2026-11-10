@@ -142,7 +142,85 @@ class StackitObjectStorageExecutorTest {
       assertThat(requestCaptor.getValue().serverSideEncryption()).isNull();
       assertThat(bodyCaptor.getValue().optionalContentLength()).contains(9L);
       assertThat(result)
-          .isEqualTo(new UploadObjectResult(BUCKET, "2026/01/invoice.pdf", "\"etag\"", null, null));
+          .isEqualTo(
+              new UploadObjectResult(
+                  BUCKET, "2026/01/invoice.pdf", "\"etag\"", null, null, false, null));
+      assertThat(requestCaptor.getValue().checksumSHA256())
+          .as("a document without a Camunda content hash is uploaded unverified")
+          .isNull();
+    }
+
+    @Test
+    @DisplayName("sends the document store's SHA-256 so that STACKIT verifies the received bytes")
+    void sendsTheDocumentStoreChecksum() {
+      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+          .thenReturn(PutObjectResponse.builder().eTag("\"etag\"").build());
+      final String hash = TestDocument.sha256Hex("pdf-bytes");
+      final String base64 =
+          java.util.Base64.getEncoder().encodeToString(java.util.HexFormat.of().parseHex(hash));
+
+      final Object result =
+          executor.execute(
+              new UploadObject(
+                  BUCKET,
+                  "k",
+                  TestDocument.fromCamundaStore("f.pdf", "application/pdf", "pdf-bytes", hash),
+                  null,
+                  null,
+                  null,
+                  null),
+              context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
+      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(base64);
+      assertThat(result)
+          .isEqualTo(new UploadObjectResult(BUCKET, "k", "\"etag\"", null, null, true, base64));
+    }
+
+    @Test
+    @DisplayName("accepts an upper-case hex hash")
+    void acceptsAnUpperCaseHash() {
+      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+          .thenReturn(PutObjectResponse.builder().build());
+      final String hash = TestDocument.sha256Hex("abc").toUpperCase(java.util.Locale.ROOT);
+
+      executor.execute(
+          new UploadObject(
+              BUCKET,
+              "k",
+              TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", hash),
+              null,
+              null,
+              null,
+              null),
+          context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
+      assertThat(requestCaptor.getValue().checksumSHA256()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("ignores a content hash that is not a SHA-256, rather than trusting it")
+    void ignoresAHashThatIsNotASha256() {
+      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+          .thenReturn(PutObjectResponse.builder().build());
+
+      // The connector SDK's own in-memory test store uses the content length as its "hash".
+      final Object result =
+          executor.execute(
+              new UploadObject(
+                  BUCKET,
+                  "k",
+                  TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", "3"),
+                  null,
+                  null,
+                  null,
+                  null),
+              context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
+      assertThat(requestCaptor.getValue().checksumSHA256()).isNull();
+      assertThat(((UploadObjectResult) result).integrityVerified()).isFalse();
     }
 
     @Test
@@ -233,7 +311,8 @@ class StackitObjectStorageExecutorTest {
       assertThat(requestCaptor.getValue().tagging()).isEqualTo("env=prod%20test");
       assertThat(requestCaptor.getValue().serverSideEncryption())
           .isEqualTo(ServerSideEncryption.AES256);
-      assertThat(result).isEqualTo(new UploadObjectResult(BUCKET, "k", "\"e\"", "v1", "AES256"));
+      assertThat(result)
+          .isEqualTo(new UploadObjectResult(BUCKET, "k", "\"e\"", "v1", "AES256", false, null));
     }
 
     @Test

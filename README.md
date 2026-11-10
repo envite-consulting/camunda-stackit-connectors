@@ -19,7 +19,9 @@ Maintained by [envite consulting GmbH](https://www.envite.de).
 | [Workflows](connectors/workflows) | [STACKIT Workflows](https://docs.stackit.cloud/products/data-and-ai/workflows/) (managed Airflow) | — | Design document — blocked, see below |
 
 The Object Storage connector covers **upload**, **download**, **delete**, **copy**, **list**,
-**get metadata**, and **presigned download / upload URLs** — reading from and writing to
+**get metadata**, and **presigned download / upload URLs**. Uploads of Camunda documents are
+verified end to end: STACKIT checks the received bytes against the SHA-256 the Camunda document
+store recorded, and refuses to store anything else. It reads from and writes to
 [Camunda documents](https://docs.camunda.io/docs/components/concepts/document-handling/), so a
 file can flow through a process without ever being pasted into a variable.
 

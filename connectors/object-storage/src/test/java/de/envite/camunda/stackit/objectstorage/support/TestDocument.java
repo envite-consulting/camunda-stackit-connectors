@@ -20,6 +20,7 @@ import io.camunda.connector.api.document.Document;
 import io.camunda.connector.api.document.DocumentLinkParameters;
 import io.camunda.connector.api.document.DocumentMetadata;
 import io.camunda.connector.api.document.DocumentReference;
+import io.camunda.connector.runtime.core.document.CamundaDocumentReferenceImpl;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -40,10 +41,41 @@ public final class TestDocument implements Document {
 
   private final byte[] content;
   private final DocumentMetadata metadata;
+  private final DocumentReference reference;
 
-  private TestDocument(final byte[] content, final DocumentMetadata metadata) {
+  private TestDocument(
+      final byte[] content, final DocumentMetadata metadata, final DocumentReference reference) {
     this.content = content;
     this.metadata = metadata;
+    this.reference = reference;
+  }
+
+  private TestDocument(final byte[] content, final DocumentMetadata metadata) {
+    this(content, metadata, null);
+  }
+
+  /**
+   * A document from the Camunda document store, whose reference carries {@code contentHash} - in a
+   * real cluster the hex SHA-256 of the content.
+   */
+  public static TestDocument fromCamundaStore(
+      final String fileName, final String contentType, final String content, final String hash) {
+    final byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+    final Metadata metadata = new Metadata(contentType, fileName, (long) bytes.length);
+    return new TestDocument(
+        bytes, metadata, new CamundaDocumentReferenceImpl("test-store", "doc-1", hash, metadata));
+  }
+
+  /** The hex SHA-256 of {@code content}, as a Camunda document store records it. */
+  public static String sha256Hex(final String content) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(
+              java.security.MessageDigest.getInstance("SHA-256")
+                  .digest(content.getBytes(StandardCharsets.UTF_8)));
+    } catch (final java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   /** A document whose metadata reports its size, as the real document store does. */
@@ -80,9 +112,10 @@ public final class TestDocument implements Document {
     return content.clone();
   }
 
+  /** The store reference, or {@code null} for a document that has none (like an inline one). */
   @Override
   public DocumentReference reference() {
-    throw new UnsupportedOperationException("TestDocument has no store reference");
+    return reference;
   }
 
   @Override

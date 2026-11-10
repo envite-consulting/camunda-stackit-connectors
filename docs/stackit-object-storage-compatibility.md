@@ -258,9 +258,13 @@ What this means:
   headers the vendor documents as unsupported, so a StorageGRID upgrade may change the behaviour
   without notice; and `eu02` (12.0) has not been measured. `WHEN_REQUIRED` sends a plain
   `UNSIGNED-PAYLOAD` request whose behaviour is not in question.
-- **What integrity checking does exist:** TLS in transit, and for single-part uploads without SSE-C
-  an ETag that is the MD5 of the stored bytes (measured), which a client can compare with an MD5 it
-  computed while streaming.
+- **What integrity checking does exist:** TLS in transit; for single-part uploads without SSE-C an
+  ETag that is the MD5 of the stored bytes (measured); and `x-amz-checksum-sha256` as a header,
+  which STACKIT verifies before storing. The Object Storage connector uses the last one for every
+  Camunda document: the document store has already recorded the SHA-256 of the content (its
+  `contentHash`), so the connector sends it as that header at no extra cost. Measured on `eu01`:
+  accepted with and without SSE-S3, and a document whose content no longer matches is refused
+  with `BadDigest` and not stored.
 
 Not yet measured: `eu02`; a checksum algorithm declared on `CreateMultipartUpload` (AWS CLI, S3
 Transfer Manager); whether a corrupted *trailer* is noticed (by analogy with the CRC32 header,

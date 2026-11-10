@@ -218,6 +218,9 @@ Three tiers, selected by JUnit tag:
 - Drive the connector in integration and live tests through `support/ConnectorHarness`, which
   sends engine-shaped job variables through the real connector function. Read results back
   with a separate client rather than trusting the connector's own report.
+- Create documents through the harness, which uses `support/ClusterLikeDocumentStore`, not the
+  SDK's `InMemoryDocumentStore`. The SDK's store records the content *length* as `contentHash`
+  and no size, so its documents are neither verified nor streamed the way a real cluster's are.
 - Live tests never run in CI or in a plain `mvn verify`. They read credentials from the
   environment (`tools/live-tests.sh` loads the gitignored `.secrets/live-test.env`), skip
   themselves via `Assumptions` when unconfigured, write only below a per-run key prefix and

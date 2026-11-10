@@ -87,6 +87,15 @@ If the document store reports no size for the document, the AWS SDK has to buffe
 determine `Content-Length`; the connector logs a warning when that happens. Documents created by
 the Camunda document store always carry a size.
 
+**Uploads of Camunda documents are verified end to end.** Every Camunda document store records the
+SHA-256 of a document's content when the document is created (its `contentHash`, checked again on
+every read). The connector sends that hash as `x-amz-checksum-sha256`, and STACKIT compares it with
+the bytes it actually receives before storing anything: a mismatch is refused with
+`INTEGRITY_CHECK_FAILED` and nothing is written. This costs no extra read and no extra request,
+because the hash already exists. Inline and external-URL documents carry no such hash and are
+uploaded unverified; `integrityVerified` in the result says which case applied. Measured against
+STACKIT `eu01`, with and without SSE-S3.
+
 | Input | Required | Notes |
 | --- | --- | --- |
 | Bucket | yes | Must already exist |
@@ -123,7 +132,9 @@ the Camunda document store always carry a size.
   "key": "2026/01/invoice-4711.pdf",
   "eTag": "\"9b2cf5...\"",
   "versionId": null,
-  "serverSideEncryption": "AES256"
+  "serverSideEncryption": "AES256",
+  "integrityVerified": true,
+  "checksumSha256": "q1MKE+RZFJgrefm34/uplM/R8/si9xzqGvvwK0YMbR0="
 }
 ```
 
@@ -376,6 +387,7 @@ bucket and key involved and says what to check. **A credential never appears in 
 | `INVALID_INPUT` | no | Invalid bucket name, malformed endpoint, bad or out-of-range expiration, HTTP 400 | Correct the task inputs. |
 | `RATE_LIMITED` | **yes**, 5 s | `SlowDown`, HTTP 429 | STACKIT allows 2500 requests/s and 500 concurrent requests per project. Reduce concurrency if it persists. |
 | `SERVICE_UNAVAILABLE` | **yes**, 10 s (except HTTP 501) | HTTP 5xx | Transient. HTTP 501 is *not* retried: STACKIT returns it for S3 features it does not implement at all, and repeating the request cannot change that. |
+| `INTEGRITY_CHECK_FAILED` | no | `BadDigest`: the uploaded bytes do not match the document store's SHA-256 | Nothing was stored. The content read back from the Camunda document store differs from what was stored there — check the document store; a retry would send the same damaged content. |
 | `CONNECTION_ERROR` | **yes**, 5 s | A client-side failure caused by the network — an `IOException` in its cause chain (DNS failure, connection refused, TLS failure, connect timeout after 10 s, no data for 60 s) — or an API-call / API-call-attempt timeout | Check network egress from the connector runtime, proxy configuration, and the region or custom endpoint. |
 | `UNEXPECTED_ERROR` | no | Anything unmapped — including a client-side failure that is not network-related, such as a request the SDK cannot build, which no retry can fix | Treat as a bug report; the message carries the original failure. |
 
@@ -462,6 +474,10 @@ no integrity on STACKIT and depends on headers the vendor documents as unsupport
 connector does not use it. STACKIT switch checksums off in their own examples too
 (`checksumAlgorithm = ""` for Velero, `skip_s3_checksum = true` for Terraform). Full measurements:
 [compatibility notes, §2.7](../../docs/stackit-object-storage-compatibility.md#27-measured-what-stackit-does-with-checksums).
+
+The one checksum the connector does send is the opposite case: the SHA-256 of a Camunda document,
+as an `x-amz-checksum-sha256` **header**, which is exactly what StorageGRID verifies (see
+[Upload object](#upload-object)).
 
 This is asserted by `ChecksumHeaderRegressionTest`, which records the request the SDK would put on
 the wire and checks the headers *and* the body bytes. The presigner needs no such setting —

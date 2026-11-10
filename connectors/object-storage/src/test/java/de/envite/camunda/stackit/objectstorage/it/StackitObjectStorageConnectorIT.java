@@ -30,6 +30,7 @@ import de.envite.camunda.stackit.objectstorage.model.response.PresignedUrlResult
 import de.envite.camunda.stackit.objectstorage.model.response.UploadObjectResult;
 import de.envite.camunda.stackit.objectstorage.support.ConnectorHarness;
 import io.camunda.connector.api.document.Document;
+import io.camunda.connector.api.document.DocumentReference;
 import io.camunda.connector.api.document.DocumentReturnChoice;
 import io.camunda.connector.api.error.ConnectorException;
 import io.floci.testcontainers.FlociContainer;
@@ -154,6 +155,10 @@ class StackitObjectStorageConnectorIT {
     assertThat(upload.bucket()).isEqualTo(BUCKET);
     assertThat(upload.key()).isEqualTo(KEY);
     assertThat(upload.eTag()).isNotBlank();
+    assertThat(upload.integrityVerified())
+        .as("a document from a Camunda document store carries a SHA-256 the server verifies")
+        .isTrue();
+    assertThat(upload.checksumSha256()).isEqualTo(sha256Base64(CONTENT));
 
     assertThat(
             admin
@@ -349,6 +354,35 @@ class StackitObjectStorageConnectorIT {
 
   @Test
   @Order(11)
+  @DisplayName("refuses content that no longer matches the document's checksum, storing nothing")
+  void refusesCorruptedContent() {
+    final String key = "corrupted/invoice.txt";
+    final Document document = harness.createDocument(CONTENT, "invoice.txt", "text/plain");
+    harness
+        .documentStore()
+        .corruptReadsOf((DocumentReference.CamundaDocumentReference) document.reference());
+
+    assertThatThrownBy(() ->
+            harness.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    BUCKET,
+                    "key",
+                    key,
+                    "document",
+                    ConnectorHarness.documentVariable(document))))
+        .isInstanceOfSatisfying(
+            ConnectorException.class,
+            e -> assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED));
+    assertThat(
+            ((HeadObjectResult) harness.run("headObject", Map.of("bucket", BUCKET, "key", key)))
+                .exists())
+        .isFalse();
+  }
+
+  @Test
+  @Order(12)
   @DisplayName("deletes the object, after which it no longer exists")
   void deletesTheObject() {
     final Object result = harness.run("deleteObject", Map.of("bucket", BUCKET, "key", KEY));
@@ -359,6 +393,15 @@ class StackitObjectStorageConnectorIT {
             ((HeadObjectResult) harness.run("headObject", Map.of("bucket", BUCKET, "key", KEY)))
                 .exists())
         .isFalse();
+  }
+
+  private static String sha256Base64(final byte[] content) {
+    return java.util.Base64.getEncoder()
+        .encodeToString(
+            java.util.HexFormat.of()
+                .parseHex(
+                    de.envite.camunda.stackit.objectstorage.support.ClusterLikeDocumentStore
+                        .sha256Hex(content)));
   }
 
   private static HttpClient httpClient() {

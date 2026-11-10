@@ -51,6 +51,7 @@ class StackitErrorCodesTest {
             "RATE_LIMITED",
             "SERVICE_UNAVAILABLE",
             "CONNECTION_ERROR",
+            "INTEGRITY_CHECK_FAILED",
             "UNEXPECTED_ERROR");
   }
 

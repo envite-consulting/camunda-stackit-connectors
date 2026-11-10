@@ -26,6 +26,19 @@ package de.envite.camunda.stackit.objectstorage.model.response;
  * @param versionId the object version, only present on a bucket with versioning enabled
  * @param serverSideEncryption the server-side encryption that was applied, {@code AES256} or {@code
  *     null}
+ * @param integrityVerified {@code true} if STACKIT checked the received bytes against the SHA-256
+ *     the Camunda document store recorded when the document was created, and accepted them; {@code
+ *     false} for a document that carries no such checksum (inline or external documents), which was
+ *     uploaded unverified
+ * @param checksumSha256 the Base64 SHA-256 STACKIT verified, as in the {@code
+ *     x-amz-checksum-sha256} header, or {@code null} when {@code integrityVerified} is {@code
+ *     false}; worth keeping for an audit trail
  */
 public record UploadObjectResult(
-    String bucket, String key, String eTag, String versionId, String serverSideEncryption) {}
+    String bucket,
+    String key,
+    String eTag,
+    String versionId,
+    String serverSideEncryption,
+    boolean integrityVerified,
+    String checksumSha256) {}

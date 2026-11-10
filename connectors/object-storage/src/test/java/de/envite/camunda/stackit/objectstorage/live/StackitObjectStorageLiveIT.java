@@ -30,6 +30,7 @@ import de.envite.camunda.stackit.objectstorage.model.response.PresignedUrlResult
 import de.envite.camunda.stackit.objectstorage.model.response.UploadObjectResult;
 import de.envite.camunda.stackit.objectstorage.support.ConnectorHarness;
 import io.camunda.connector.api.document.Document;
+import io.camunda.connector.api.document.DocumentReference;
 import io.camunda.connector.api.document.DocumentReturnChoice;
 import io.camunda.connector.api.error.ConnectorException;
 import java.net.URI;
@@ -160,6 +161,9 @@ class StackitObjectStorageLiveIT {
     assertThat(upload.eTag())
         .as("a single-part PUT's ETag is the MD5 of exactly the bytes STACKIT stored")
         .isEqualTo('"' + md5Hex(binary) + '"');
+    assertThat(upload.integrityVerified())
+        .as("STACKIT verified the bytes against the document store's SHA-256")
+        .isTrue();
   }
 
   @Test
@@ -222,6 +226,9 @@ class StackitObjectStorageLiveIT {
                     true));
 
     assertThat(upload.serverSideEncryption()).isEqualTo("AES256");
+    assertThat(upload.integrityVerified())
+        .as("the SHA-256 check also works together with SSE-S3")
+        .isTrue();
   }
 
   @Test
@@ -452,6 +459,38 @@ class StackitObjectStorageLiveIT {
 
   @Test
   @Order(12)
+  @DisplayName("refuses content that no longer matches the document's SHA-256, storing nothing")
+  void refusesCorruptedContent() {
+    final String key = prefix + "corrupted/payload.bin";
+    final Document document =
+        harness.createDocument(binary, "payload.bin", "application/octet-stream");
+    harness
+        .documentStore()
+        .corruptReadsOf((DocumentReference.CamundaDocumentReference) document.reference());
+
+    assertThatThrownBy(() ->
+            harness.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    config.bucket(),
+                    "key",
+                    key,
+                    "document",
+                    ConnectorHarness.documentVariable(document))))
+        .isInstanceOfSatisfying(
+            ConnectorException.class,
+            e -> assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED));
+    assertThat(
+            ((HeadObjectResult)
+                    harness.run("headObject", Map.of("bucket", config.bucket(), "key", key)))
+                .exists())
+        .as("STACKIT must not have stored the damaged content")
+        .isFalse();
+  }
+
+  @Test
+  @Order(13)
   @DisplayName("reports a wrong secret as AUTHENTICATION_FAILED, without retrying")
   void wrongSecret() {
     final ConnectorHarness wrong =
