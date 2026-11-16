@@ -76,7 +76,7 @@
     <camunda.engine.version.range>^8.10</camunda.engine.version.range>
 
     <!-- ==================== Dependencies ==================== -->
-    <version.aws-sdk2>2.57.12</version.aws-sdk2>
+    <version.aws-sdk2>2.59.0</version.aws-sdk2>
     <!--
       Jackson is `provided`: the connector runtime puts its own Jackson on the classpath and the
       connectors run against that one. Compile against the same line, or a connector can call
