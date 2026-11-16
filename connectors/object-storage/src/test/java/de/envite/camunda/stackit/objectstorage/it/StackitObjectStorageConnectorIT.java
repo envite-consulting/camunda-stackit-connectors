@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
+import de.envite.camunda.stackit.objectstorage.core.UploadLimits;
 import de.envite.camunda.stackit.objectstorage.model.response.CopyObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.DeleteObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.DownloadObjectResult;
@@ -85,6 +86,11 @@ class StackitObjectStorageConnectorIT {
   private static final String COPY_KEY = "archive/2026/01/invoice.txt";
   private static final byte[] CONTENT =
       "STACKIT Object Storage connector integration test payload".getBytes(StandardCharsets.UTF_8);
+
+  private static final int MIB = 1024 * 1024;
+
+  /** Parts of 5 MiB, the S3 minimum, so that 11 MiB go up as three parts. */
+  private static final UploadLimits SMALL_PARTS = new UploadLimits(5 * MIB, 5 * MIB, 10_000);
 
   @Container private static final FlociContainer S3_SERVER = FlociS3Server.create();
 
@@ -155,7 +161,7 @@ class StackitObjectStorageConnectorIT {
     assertThat(upload.bucket()).isEqualTo(BUCKET);
     assertThat(upload.key()).isEqualTo(KEY);
     assertThat(upload.eTag()).isNotBlank();
-    assertThat(upload.integrityVerified())
+    assertThat(upload.documentChecksumVerified())
         .as("a document from a Camunda document store carries a SHA-256 the server verifies")
         .isTrue();
     assertThat(upload.checksumSha256()).isEqualTo(sha256Base64(CONTENT));
@@ -393,6 +399,79 @@ class StackitObjectStorageConnectorIT {
             ((HeadObjectResult) harness.run("headObject", Map.of("bucket", BUCKET, "key", KEY)))
                 .exists())
         .isFalse();
+  }
+
+  @Test
+  @Order(13)
+  @DisplayName("uploads a large document as a verified multipart upload, byte for byte")
+  void uploadsInParts() {
+    final ConnectorHarness multipart = harness.withUploadLimits(SMALL_PARTS);
+    final byte[] content = randomBytes(11 * MIB + 3);
+    final Document document =
+        multipart.createDocument(content, "large.bin", "application/octet-stream");
+
+    final UploadObjectResult upload =
+        (UploadObjectResult)
+            multipart.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    BUCKET,
+                    "key",
+                    "multipart/large.bin",
+                    "document",
+                    ConnectorHarness.documentVariable(document)));
+
+    assertThat(upload.partCount()).isEqualTo(3);
+    assertThat(upload.documentChecksumVerified()).isTrue();
+    assertThat(upload.checksumSha256()).isEqualTo(sha256Base64(content));
+    assertThat(
+            admin
+                .getObjectAsBytes(builder -> builder.bucket(BUCKET).key("multipart/large.bin"))
+                .asByteArray())
+        .isEqualTo(content);
+  }
+
+  @Test
+  @Order(14)
+  @DisplayName(
+      "aborts a multipart upload whose content does not match the document, storing nothing")
+  void abortsACorruptedMultipartUpload() {
+    final ConnectorHarness multipart = harness.withUploadLimits(SMALL_PARTS);
+    final String key = "multipart/corrupted.bin";
+    final Document document =
+        multipart.createDocument(
+            randomBytes(11 * MIB), "corrupted.bin", "application/octet-stream");
+    multipart
+        .documentStore()
+        .corruptReadsOf((DocumentReference.CamundaDocumentReference) document.reference());
+
+    assertThatThrownBy(() ->
+            multipart.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    BUCKET,
+                    "key",
+                    key,
+                    "document",
+                    ConnectorHarness.documentVariable(document))))
+        .isInstanceOfSatisfying(
+            ConnectorException.class,
+            e -> assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED));
+    assertThat(
+            ((HeadObjectResult) harness.run("headObject", Map.of("bucket", BUCKET, "key", key)))
+                .exists())
+        .isFalse();
+    assertThat(admin.listMultipartUploads(builder -> builder.bucket(BUCKET).prefix(key)).uploads())
+        .as("the abandoned upload was aborted, so no parts are left behind")
+        .isEmpty();
+  }
+
+  private static byte[] randomBytes(final int length) {
+    final byte[] bytes = new byte[length];
+    new java.util.Random(4711).nextBytes(bytes);
+    return bytes;
   }
 
   private static String sha256Base64(final byte[] content) {

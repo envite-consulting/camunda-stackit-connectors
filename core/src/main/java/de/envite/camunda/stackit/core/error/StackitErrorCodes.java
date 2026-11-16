@@ -58,6 +58,14 @@ public final class StackitErrorCodes {
   public static final String ALREADY_EXISTS = "ALREADY_EXISTS";
 
   /**
+   * The request is valid but conflicts with the current state of the resource, for example deleting
+   * the project compliance lock while Object Lock buckets still exist, or setting a default
+   * retention on a bucket that was created without Object Lock. Retrying does not help until that
+   * state has been changed.
+   */
+  public static final String CONFLICT = "CONFLICT";
+
+  /**
    * The request was rejected as invalid before it reached the resource, for example a bucket name
    * that violates the naming rules or a missing required input. Correct the connector inputs.
    */

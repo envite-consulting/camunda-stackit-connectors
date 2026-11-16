@@ -169,14 +169,17 @@ class StackitObjectStorageConnectorFunctionTest {
     }
 
     @Test
-    @DisplayName("the service file names exactly this class")
+    @DisplayName("the service file names exactly the data-plane and the management connector")
     void serviceFileNamesThisClass() {
       final String serviceFile =
           TestResources.readString(
               "META-INF/services/io.camunda.connector.api.outbound.OutboundConnectorFunction");
 
-      assertThat(serviceFile.strip())
-          .isEqualTo(StackitObjectStorageConnectorFunction.class.getName());
+      assertThat(serviceFile.strip().lines().map(String::strip).toList())
+          .containsExactly(
+              StackitObjectStorageConnectorFunction.class.getName(),
+              "de.envite.camunda.stackit.objectstorage.management"
+                  + ".StackitObjectStorageManagementConnectorFunction");
     }
   }
 
@@ -218,7 +221,7 @@ class StackitObjectStorageConnectorFunctionTest {
     @DisplayName("declares name, version, engine range, icon, docs and keywords")
     void declaresTheTemplateMetadata() {
       assertThat(elementTemplate.name()).isEqualTo("STACKIT Object Storage Outbound Connector");
-      assertThat(elementTemplate.version()).isEqualTo(1L);
+      assertThat(elementTemplate.version()).isEqualTo(2L);
       assertThat(elementTemplate.engineVersion()).isEqualTo("^8.10");
       assertThat(elementTemplate.icon()).isEqualTo("icon.svg");
       assertThat(elementTemplate.documentationRef())
@@ -228,6 +231,21 @@ class StackitObjectStorageConnectorFunctionTest {
       assertThat(elementTemplate.keywords())
           .contains(
               "STACKIT", "object storage", "S3", "bucket", "presigned URL", "sovereign cloud");
+    }
+
+    @Test
+    @DisplayName(
+        "keeps a snapshot of every earlier template version for the Modeler's upgrade path")
+    void archivesEarlierVersions() throws Exception {
+      final java.nio.file.Path versioned =
+          java.nio.file.Path.of(
+              "element-templates", "versioned", "stackit-object-storage-outbound-connector-1.json");
+      assertThat(versioned).exists();
+      final var snapshot =
+          new com.fasterxml.jackson.databind.ObjectMapper().readTree(versioned.toFile());
+      assertThat(snapshot.get("id").asText())
+          .isEqualTo(StackitObjectStorageConnectorFunction.TEMPLATE_ID);
+      assertThat(snapshot.get("version").asLong()).isEqualTo(1L);
     }
 
     @Test
