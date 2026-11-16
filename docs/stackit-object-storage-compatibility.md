@@ -28,6 +28,8 @@ has no checksum settings at all — see §10):
 | `forcePathStyle` | `true` (default; make configurable) | Wildcard TLS SAN is single-level (§3) |
 | `supportLegacyMd5` / MD5 interceptors | **do not set** | STACKIT accepts the modern default checksum on `DeleteObjects` (§2.6) |
 | Session tokens / STS | Do not design around them | Available in eu02 only, undocumented, no STACKIT tooling (§9.2) |
+| Integrity | `x-amz-checksum-sha256` **header**, computed by the caller | The only checksum STACKIT verifies; for multipart, declare `SHA256` on `CreateMultipartUpload` or part checksums are refused (§2.7) |
+| Object Lock `RetainUntilDate` | Whole seconds | Nanosecond precision is rejected as `MalformedXML` (§7.3) |
 
 ---
 
@@ -266,10 +268,31 @@ What this means:
   accepted with and without SSE-S3, and a document whose content no longer matches is refused
   with `BadDigest` and not stored.
 
-Not yet measured: `eu02`; a checksum algorithm declared on `CreateMultipartUpload` (AWS CLI, S3
-Transfer Manager); whether a corrupted *trailer* is noticed (by analogy with the CRC32 header,
-presumably not). Re-run the probe after every AWS SDK upgrade and in each region
-([Testing against real STACKIT](../README.md#testing-against-real-stackit)).
+#### Multipart parts and Object Lock requests
+
+Measured **2026-11-16** against `eu01`, same SDK, by
+[`ObjectLockProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/ObjectLockProbeLiveIT.java):
+
+| Request (headers as sent) | STACKIT `eu01` |
+| --- | --- |
+| `UploadPart` with a wrong `Content-MD5` | **Rejected**: `400 BadDigest` |
+| `UploadPart` with `x-amz-checksum-sha256`, nothing declared on `CreateMultipartUpload` | **Rejected**: `400 InvalidRequest`, *"Checksum Type mismatch occurred, expected checksum Type: null, actual checksum Type: sha256"* — whether the value is right or wrong |
+| `CreateMultipartUpload` with `x-amz-checksum-algorithm: SHA256`, then `UploadPart` with a **wrong** `x-amz-checksum-sha256` | **Rejected**: `400 BadDigest`, *"The sha256 you specified did not match the calculated checksum."* |
+| The same with the correct SHA-256 per part, then `CompleteMultipartUpload` listing each part's `ChecksumSHA256` | Accepted, stored intact |
+| `PutObjectRetention` / `PutObjectLegalHold` under `WHEN_REQUIRED`: the SDK adds `x-amz-sdk-checksum-algorithm: CRC32` and an `x-amz-checksum-crc32` header, because S3 marks both operations checksum-required | Accepted |
+| The same with `checksumAlgorithm(SHA256)`: `x-amz-checksum-sha256` header | Accepted (what the connector sends) |
+
+So a multipart upload **can** be verified part by part on STACKIT, but only if SHA-256 is
+declared on `CreateMultipartUpload` — this answers the earlier open question about a declared
+algorithm, for SHA-256 and `eu01`. The Object Storage connector uploads documents over 5 GiB, and
+documents without a recorded checksum, that way: it computes each part's SHA-256 itself and sends
+it as a header, and compares the SHA-256 of the whole content with the document store's before
+completing.
+
+Not yet measured: `eu02`; CRC32 or another algorithm declared on `CreateMultipartUpload`, as the
+AWS CLI and the S3 Transfer Manager may send it; whether a corrupted *trailer* is noticed (by
+analogy with the CRC32 header, presumably not). Re-run both probes after every AWS SDK upgrade and in
+each region ([Testing against real STACKIT](../README.md#testing-against-real-stackit)).
 
 ---
 
@@ -501,6 +524,32 @@ a storage guarantee into an **operational** one: it holds only as long as someth
 it, and a lapse is unrecoverable because an expired lock cannot be retroactively reinstated. Any
 documentation this repository ships must state that plainly.
 
+### 7.3 Measured: Object Lock through the S3 API
+
+Measured **2026-11-16** against `eu01`, in a project **without** the compliance lock, by
+[`ObjectLockProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/ObjectLockProbeLiveIT.java)
+and exercised end to end by `ObjectLockLiveIT`:
+
+| Request | STACKIT `eu01` |
+| --- | --- |
+| S3 `CreateBucket` with `x-amz-bucket-object-lock-enabled: true`, access-key credentials | Accepted; Object Lock `Enabled`, versioning `Enabled`, no default rule. The bucket can be deleted again once empty |
+| `PutObject` with Object Lock headers and **no** checksum | **Rejected**: `400 InvalidRequest`, *"Content-MD5 OR x-amz-checksum- HTTP header is required for Put Object requests with Object Lock parameters"* |
+| `PutObject` with `GOVERNANCE` retention, legal hold and `x-amz-checksum-sha256` | Accepted; `HeadObject` reports mode, retain-until and legal hold |
+| Multipart upload with `GOVERNANCE` retention on `CreateMultipartUpload` and SHA-256 per part | Accepted; retention applied |
+| `PutObjectRetention` with a `RetainUntilDate` in nanosecond precision (`…28.332190752Z`) | **Rejected**: `400 MalformedXML`, *"Invalid RetainUntilDate"*. Millisecond precision is accepted |
+| Shortening `GOVERNANCE` retention without / with `x-amz-bypass-governance-retention` | `403 AccessDenied` / accepted |
+| `DeleteObject` of a retained version without / with the bypass | `403 AccessDenied` / accepted |
+| `DeleteObject` of a version under legal hold, with the bypass | `403 AccessDenied` |
+| `DeleteObject` without a version id on a retained object | Accepted; writes a delete marker |
+| `GetObjectRetention` / `GetObjectLegalHold` on an object that never had one | `404 NoSuchObjectLockConfiguration` |
+| `PutObjectRetention` in a bucket without Object Lock | `400 InvalidRequest`, *"Bucket is missing Object Lock Configuration"* |
+
+> **Contradiction to note.** The v2 management API specification says that `CreateBucket` with
+> `objectLockEnabled` requires an active project compliance lock. Through the S3 API, a bucket with
+> Object Lock was created in a project without one, as the STACKIT Object Lock documentation also
+> describes (§7). Only `GOVERNANCE` retention was used there; `COMPLIANCE` in such a bucket was not
+> tried, because it could not be removed again.
+
 ---
 
 ## 8. Limits
@@ -538,7 +587,8 @@ These bind too, and some will surprise you
 | Max. **supported** single `PutObject` | 5 TiB, but NetApp state *"future releases of StorageGRID won't support uploads of objects larger than 5 GiB"* |
 | Unescaped UTF-8 in metadata keys/values | *"StorageGRID behavior is undefined"* — ASCII-only, or encode |
 
-The 5 GiB note is a live deprecation. Route anything above 5 GiB through multipart upload.
+The 5 GiB note is a live deprecation. Route anything above 5 GiB through multipart upload — the
+Object Storage connector does so automatically.
 
 ### 8.2 Bucket naming
 
@@ -711,10 +761,12 @@ Nothing below has been settled. None of it should be treated as fact.
    Is an unbounded key actually accepted, and is there a hidden cap?
 9. **Bucket-name case sensitivity (§8.2).** Are uppercase names genuinely accepted, and if so are
    they addressable?
-10. **Multipart with a declared checksum algorithm.** Answered for `eu01` with `WHEN_REQUIRED` and
-    with the SDK default: a one-part multipart upload needs no per-part checksums and completes
-    (§2.7). Still open: `CreateMultipartUpload` with `x-amz-checksum-algorithm`, as the AWS CLI and
-    the S3 Transfer Manager send it — the likely subject of the NetApp KBs in §2.4.
+10. **Multipart with a declared checksum algorithm.** Answered for SHA-256 on `eu01` (§2.7): when
+    declared on `CreateMultipartUpload`, every part's SHA-256 is verified; undeclared, a part
+    checksum is refused. Still open: other algorithms, which the AWS CLI and the S3 Transfer
+    Manager may declare — the likely subject of the NetApp KBs in §2.4 — and `eu02`.
+13. **Object Lock in `eu02`, and `COMPLIANCE` without the project compliance lock (§7.3).**
+    Measured on `eu01` with `GOVERNANCE` only.
 11. **`SelectObjectContent` and `RestoreObject`.** Listed as supported, but STACKIT offers no
     archive tier, so `RestoreObject` may be a no-op. Neither is exercised by any planned connector.
 12. **Does STACKIT enforce the 2,500 req/s and 500 concurrent-request limits with `503 SlowDown`,**

@@ -103,7 +103,15 @@ default, or add a checksum algorithm, without re-running `StorageGridChecksumPro
 both regions. There is a regression test asserting those headers are absent — if you ever see
 it fail, do not "fix" it by relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
 checksum parameters; `ChecksumHeaderRegressionTest$PresignedUpload` pins that, so re-check it
-on SDK upgrades. Full analysis and sources:
+on SDK upgrades.
+
+Integrity comes from the opposite direction: the connector computes SHA-256 values itself and
+sends them as `x-amz-checksum-sha256` **headers**, the one checksum STACKIT verifies — on every
+upload (the document store's own SHA-256 where it exists), on every multipart part (with `SHA256`
+declared on `CreateMultipartUpload`, without which STACKIT refuses part checksums), and on the
+Object Lock requests. `OperationChecksumWireTest` pins each of these on the wire. Never replace
+them with an SDK-computed checksum (`checksumAlgorithm` on a streaming body), which becomes a
+trailer STACKIT discards. Full analysis and sources:
 [`docs/stackit-object-storage-compatibility.md`](docs/stackit-object-storage-compatibility.md).
 
 ### 4. Credentials never reach a log or an incident message
@@ -228,9 +236,15 @@ Three tiers, selected by JUnit tag:
   contains the access key ID) from a test.
 - Run the live tests before merging anything that changes how the connector talks to S3 — in
   particular every AWS SDK upgrade, which can change default checksum behaviour.
-- `StorageGridChecksumProbeLiveIT` is a probe, not a test of STACKIT: it records what STACKIT
-  does with the SDK's default checksums in `target/stackit-live-findings.txt`. Carry new
-  findings into `docs/stackit-object-storage-compatibility.md`.
+- `StorageGridChecksumProbeLiveIT` and `ObjectLockProbeLiveIT` are probes, not tests of STACKIT:
+  they record what STACKIT does with the SDK's default checksums, part checksums and Object Lock
+  requests in `target/stackit-live-findings.txt`. Carry new findings into
+  `docs/stackit-object-storage-compatibility.md`.
+- Live tests that need Object Lock create their own bucket with it and use `GOVERNANCE`
+  retention only. **Never `COMPLIANCE` in a test**: nobody can remove it, so the object and its
+  bucket would outlive the run by up to a year.
+- Exercise multipart uploads with `ConnectorHarness.withUploadLimits(...)` and parts of 5 MiB,
+  rather than uploading gigabytes.
 - Bind request models through
   `io.camunda.connector.runtime.test.outbound.OutboundConnectorContextBuilder` (note the
   package: `runtime.test`, not `connector.test`) with JSON fixtures shaped exactly as the
