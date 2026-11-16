@@ -15,7 +15,7 @@ core/                          stackit-connector-core       shared across all co
 auth/                          stackit-connector-auth       STACKIT service account key flow
 connectors/
   pom.xml                      stackit-connectors-parent    parent for connector modules
-  object-storage/              stackit-connector-object-storage   ← implemented
+  object-storage/              stackit-connector-object-storage   ← implemented: data plane + management
   archiving/                   design doc only, no pom yet
   workflows/                   design doc only, no pom yet
 bundle/                        stackit-connectors-bundle    runnable Connector Runtime
@@ -157,17 +157,35 @@ connector keeps an inline fallback for the same reason.
 Adding a credential chooser later is additive: a new property plus a template `version`
 bump. It requires `engines.camunda >= 8.10`, which we already declare.
 
-### Object Storage v1 is S3 data plane only
+### Object Storage ships two connectors, one per credential type
 
-The connector speaks the S3 data plane with static access keys. Bucket and credential
-provisioning live in STACKIT's management API (`object-storage.api.stackit.cloud`) and need
-the service account key flow — a different credential type. Mixing both auth models into one
-element template makes for a confusing UI, so control-plane operations are deferred.
+`connectors/object-storage` contains two connector functions in one jar, each with its own
+element template:
 
-That is why `auth/` has no consumer inside this repository yet. It is built and tested as
-the shared foundation for the Archiving, Workflows and KMS connectors and for Object Storage
-control-plane operations in a later release. Do not wire it into the Object Storage
-connector to "make it used".
+| Connector | API | Credential | Job type |
+| --- | --- | --- | --- |
+| `StackitObjectStorageConnectorFunction` | S3 data plane (`object.storage.<region>.onstackit.cloud`) | access key of a credentials group (SigV4) | `de.envite:stackit-object-storage:1` |
+| `management.StackitObjectStorageManagementConnectorFunction` | management API v2 (`object-storage.api.stackit.cloud`) | STACKIT service account (`auth/`, key flow) | `de.envite:stackit-object-storage-management:1` |
+
+They are separate templates because the credentials are. One template with both sets of
+credentials would show two unrelated credential groups, and the modeller would have to guess
+which one an operation uses. Splitting them along the API boundary also keeps every operation's
+credential obvious.
+
+They share one module and one shaded jar so that users mount a single file. The second connector
+is a second `<connector>` entry in the module's generator configuration and a second line in the
+`META-INF/services` file; forgetting either fails silently. Do not merge the two templates, and do
+not add management operations to the data-plane union or vice versa.
+
+The management connector is the first consumer of `auth/`. It holds a `static final
+StackitTokenProviderCache`, so jobs with the same key share a token. Its custom endpoint
+receives a bearer token and is therefore restricted to `https` on `*.stackit.cloud` (see
+`ManagementEndpoints`), unlike the data-plane endpoint, where a SigV4 signature never reveals the
+secret. `auth/` remains the foundation for the planned Archiving, Workflows and KMS connectors.
+
+Operations without inputs (`listBuckets`, `getComplianceLock`, ...) make the engine send no
+`operation` variable, which Jackson rejects for an external type id. `ManagementRequest`'s
+deserializer supplies an empty object in that case; keep it if you restructure the request.
 
 ### Connector `type` namespace
 
