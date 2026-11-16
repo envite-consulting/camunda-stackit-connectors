@@ -248,7 +248,20 @@ public final class ManagementApiClient {
                   + " The resource does not exist in this project and region, or Object Storage"
                   + " is not enabled for the project in this region."
                   + stackitSaid);
-      case 409 -> StackitConnectorErrors.fatal(call.conflictCode(), prefix + stackitSaid);
+      case 409 ->
+          stackitSaid.contains("compliance_lock.required")
+              // Measured on eu01 (2026-11-16): createBucket with objectLockEnabled and
+              // setDefaultRetention answer 409 when the project has no compliance lock - not an
+              // existing resource at all.
+              ? StackitConnectorErrors.fatal(
+                  StackitErrorCodes.CONFLICT,
+                  prefix
+                      + " The management API allows this only once the project compliance lock is"
+                      + " enabled ('Create compliance lock'). Note that the"
+                      + " compliance lock enables deletion protection for the project and can only"
+                      + " be removed while no Object Lock bucket exists."
+                      + stackitSaid)
+              : StackitConnectorErrors.fatal(call.conflictCode(), prefix + stackitSaid);
       case 429 ->
           StackitConnectorErrors.retryable(
               StackitErrorCodes.RATE_LIMITED,

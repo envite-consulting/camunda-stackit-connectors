@@ -544,11 +544,14 @@ and exercised end to end by `ObjectLockLiveIT`:
 | `GetObjectRetention` / `GetObjectLegalHold` on an object that never had one | `404 NoSuchObjectLockConfiguration` |
 | `PutObjectRetention` in a bucket without Object Lock | `400 InvalidRequest`, *"Bucket is missing Object Lock Configuration"* |
 
-> **Contradiction to note.** The v2 management API specification says that `CreateBucket` with
-> `objectLockEnabled` requires an active project compliance lock. Through the S3 API, a bucket with
-> Object Lock was created in a project without one, as the STACKIT Object Lock documentation also
-> describes (§7). Only `GOVERNANCE` retention was used there; `COMPLIANCE` in such a bucket was not
-> tried, because it could not be removed again.
+> **The two APIs disagree.** Measured on `eu01` (2026-11-16), in a project without the compliance
+> lock: the management API refuses both `CreateBucket` with `objectLockEnabled` and
+> `SetDefaultRetention` with `409`, *"compliance_lock.required: Project compliance lock must be
+> enabled"*, as its v2 specification says. The S3 API creates the same Object Lock bucket without
+> complaint, and per-object `GOVERNANCE` retention works in it (above), as the STACKIT Object Lock
+> documentation describes (§7). A bucket *default* retention therefore needs the compliance lock;
+> per-object retention does not. `COMPLIANCE` retention in such a bucket was not tried, because it
+> could not be removed again.
 
 ---
 

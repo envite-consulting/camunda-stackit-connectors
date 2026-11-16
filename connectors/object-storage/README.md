@@ -690,7 +690,7 @@ missing, the task fails with `ACCESS_DENIED`. The message names the missing perm
 | Create access key | `CreateAccessKey` | Returns the **secret access key**; read the caution below. *Expires* takes an ISO-8601 date-time with offset (`2027-01-31T00:00:00Z`) or a duration from now (`P90D`). Leave it empty for a key that never expires. |
 | Delete access key | `DeleteAccessKey` | Takes the `keyId` returned by *Create access key* or *List access keys*, not the access key ID used for signing. |
 | Get compliance lock | `GetComplianceLock` | Reports `enabled: false`, instead of failing, when the project has no compliance lock. |
-| Create compliance lock | `CreateComplianceLock` | Required at project level before you can create Object Lock buckets or use `COMPLIANCE` retention. |
+| Create compliance lock | `CreateComplianceLock` | Required before this connector can create an Object Lock bucket or set a default retention: without it STACKIT answers `CONFLICT` (*"compliance_lock.required"*), measured on eu01. The S3 API — and so the data-plane connector's uploads with `GOVERNANCE` retention — works without it. |
 | Delete compliance lock | `DeleteComplianceLock` | Fails with `CONFLICT` while any Object Lock bucket exists in the project. |
 | Get default retention | `GetDefaultRetention` | Mode and number of days of an Object Lock bucket's default retention. |
 | Set default retention | `SetDefaultRetention` | `GOVERNANCE` or `COMPLIANCE`, 1 to 365 days (STACKIT's maximum). Applies to every object version written afterwards. |
@@ -736,7 +736,7 @@ The management connector uses the same codes as the data-plane connector (see
 | 401 | `AUTHENTICATION_FAILED`: the key was deleted or deactivated | no |
 | 403 | `ACCESS_DENIED`: the message names the missing permission and the role `object-storage.admin` | no |
 | 404 | `NOT_FOUND`: the resource does not exist, or Object Storage is not enabled for the project in that region | no |
-| 409 | `ALREADY_EXISTS` for the create operations, `CONFLICT` for all others (for example deleting the compliance lock while Object Lock buckets exist) | no |
+| 409 | `ALREADY_EXISTS` for the create operations, `CONFLICT` for all others (for example deleting the compliance lock while Object Lock buckets exist) and for anything STACKIT refuses because the project compliance lock is missing | no |
 | 429 | `RATE_LIMITED`, honouring `Retry-After` | **yes** |
 | 5xx except 501 | `SERVICE_UNAVAILABLE` | **yes** |
 | network failure | `CONNECTION_ERROR` | **yes** |

@@ -17,6 +17,7 @@
 package de.envite.camunda.stackit.objectstorage.live;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -244,11 +245,20 @@ class ObjectStorageManagementLiveIT {
             || StackitErrorCodes.AUTHENTICATION_FAILED.equals(e.getErrorCode())) {
           throw e;
         }
-        // The v2 specification says Object Lock buckets need the project compliance lock, which
-        // these tests never create. Without it this test has nothing to work on.
-        throw new TestAbortedException(
-            "Could not create an Object Lock bucket (" + e.getErrorCode() + "): " + e.getMessage(),
-            e);
+        // Measured on eu01: the management API creates an Object Lock bucket only with the project
+        // compliance lock, which these tests never create. The S3 API has no such requirement, so
+        // the bucket is created there instead, with the data-plane credentials of the live tests.
+        assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.CONFLICT);
+        assertThat(e.getMessage()).contains("compliance lock");
+        final LiveTestConfig s3 = LiveTestConfig.fromEnvironment();
+        if (s3 == null) {
+          throw new TestAbortedException(
+              "No compliance lock and no S3 credentials to create an Object Lock bucket with", e);
+        }
+        try (var client = s3.rawClient()) {
+          client.createBucket(builder -> builder.bucket(bucket).objectLockEnabledForBucket(true));
+        }
+        created = true;
       }
       final var read =
           (ManagementResponses.GetBucketResult) run("getBucket", Map.of("bucketName", bucket));
@@ -258,6 +268,23 @@ class ObjectStorageManagementLiveIT {
       retention.put("bucketName", bucket);
       retention.put("mode", "GOVERNANCE");
       retention.put("days", 1);
+      final boolean complianceLock =
+          ((ManagementResponses.ComplianceLockStatus) run("getComplianceLock", null)).enabled();
+      if (!complianceLock) {
+        // Measured on eu01: without the project compliance lock, STACKIT refuses a default
+        // retention with 409 compliance_lock.required. The tests never create that lock - it
+        // turns on deletion protection for the whole project - so the refusal is what is tested.
+        assertThatThrownBy(() -> run("setDefaultRetention", retention))
+            .isInstanceOfSatisfying(
+                ConnectorException.class,
+                e -> {
+                  assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.CONFLICT);
+                  assertThat(e.getMessage()).contains("compliance lock");
+                });
+        run("deleteBucket", Map.of("bucketName", bucket));
+        created = false;
+        return;
+      }
       final var set = (ManagementResponses.DefaultRetention) run("setDefaultRetention", retention);
       assertThat(set.mode()).isEqualTo("GOVERNANCE");
       assertThat(set.days()).isEqualTo(1);

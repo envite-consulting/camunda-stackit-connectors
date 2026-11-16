@@ -626,6 +626,29 @@ class StackitObjectStorageManagementConnectorFunctionTest {
     }
 
     @Test
+    @DisplayName("409 for a missing compliance lock is CONFLICT, even on a create, and says so")
+    void missingComplianceLockIsConflict() {
+      // The body STACKIT returned on eu01 for an Object Lock bucket without the compliance lock.
+      API.stubFor(
+          post(urlPathEqualTo(BASE + "/bucket/locked"))
+              .willReturn(
+                  aResponse()
+                      .withStatus(409)
+                      .withBody(
+                          "{\"detail\":[{\"key\":\"compliance_lock.required\",\"msg\":\"Project"
+                              + " compliance lock must be enabled\"}]}")));
+
+      final ConnectorException error =
+          failure(
+              () -> run("createBucket", Map.of("bucketName", "locked", "objectLockEnabled", true)));
+
+      assertThat(error.getErrorCode()).isEqualTo(StackitErrorCodes.CONFLICT);
+      assertThat(error.getMessage())
+          .contains("only once the project compliance lock is enabled")
+          .contains("compliance_lock.required");
+    }
+
+    @Test
     @DisplayName("409 on deleteComplianceLock is CONFLICT")
     void conflictOnDeleteComplianceLock() {
       API.stubFor(
