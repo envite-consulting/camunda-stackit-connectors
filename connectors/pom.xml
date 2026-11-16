@@ -128,10 +128,13 @@
               includeDependencies does not resolve transitively, so every module whose
               classes take part in the @ElementTemplate graph must be listed explicitly.
               The request models use types from stackit-connector-core, such as the
-              StackitRegion enum behind the Region dropdown.
+              StackitRegion enum behind the Region dropdown, and the management connector's
+              Authentication group is the StackitAuthentication union of stackit-connector-auth.
+              A module that does not depend on auth simply finds nothing to include for it.
             -->
             <includeDependencies>
               <includeDependency>de.envite.camunda.stackit:stackit-connector-core</includeDependency>
+              <includeDependency>de.envite.camunda.stackit:stackit-connector-auth</includeDependency>
             </includeDependencies>
           </configuration>
         </plugin>
