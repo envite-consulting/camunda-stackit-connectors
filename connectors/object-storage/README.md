@@ -3,15 +3,16 @@
 A Camunda 8 **outbound** connector for
 [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/), the
 S3-compatible object store of the STACKIT sovereign cloud. It lets a BPMN process upload and
-download Camunda documents, copy, delete, list and inspect objects, and hand out presigned URLs so
-that a browser or a third party can transfer a file without ever seeing a STACKIT credential.
+download Camunda documents with verified integrity, copy, delete, list and inspect objects, protect
+them with Object Lock retention and legal holds, and hand out presigned URLs so that a browser or a
+third party can transfer a file without ever seeing a STACKIT credential.
 
 The connector talks to the **S3 data plane** —
 `https://object.storage.<region>.onstackit.cloud` — using the AWS SDK for Java v2 against an
-endpoint override. It does **not** use the STACKIT Object Storage management API, which covers
-buckets and credentials groups; creating and deleting buckets is deliberately out of scope, because
-those are provisioning operations that belong in Terraform or the STACKIT Portal, not in a process
-instance.
+endpoint override, authenticated with an access key. Buckets, credentials groups, access keys and
+the project compliance lock live in the STACKIT management API instead, which needs a service
+account key; the same jar ships a second connector with its own element template for those, see
+[Management connector](#management-connector).
 
 > **STACKIT Object Storage is NetApp StorageGRID.** That is not trivia — it decides how the S3
 > client has to be configured. See [Known limitations](#known-limitations) and
@@ -25,14 +26,16 @@ instance.
 - [Error codes](#error-codes)
 - [Configuration](#configuration)
 - [Known limitations](#known-limitations)
+- [Management connector](#management-connector)
 - [Element template](#element-template)
 - [Build and test](#build-and-test)
 
 ## Prerequisites
 
-1. **A STACKIT project with Object Storage enabled** and at least one bucket. Bucket creation is
-   not a connector operation — create buckets in the STACKIT Portal, with the STACKIT CLI, or with
-   the Terraform provider.
+1. **A STACKIT project with Object Storage enabled** and at least one bucket. Create buckets in
+   the STACKIT Portal, with the STACKIT CLI, with the Terraform provider, or from a process with
+   the [Management connector](#management-connector). For Object Lock, the bucket must be created
+   with Object Lock enabled — it cannot be switched on later.
 2. **A credentials group and an access key.** Follow
    [Create and delete Object Storage credentials](https://docs.stackit.cloud/products/storage/object-storage/how-tos/create-and-delete-object-storage-credentials/).
    An access key consists of an access key ID and a secret access key.
@@ -79,22 +82,28 @@ engine sends.
 
 ### Upload object
 
-Uploads a Camunda document with `PutObject`. The document is **streamed** from the document store
-into the S3 request, never buffered as a byte array, so an object may be as large as the 5 TB
-STACKIT allows.
+Uploads a document. **STACKIT verifies a SHA-256 checksum of every upload before it stores
+anything**; a mismatch is refused with `INTEGRITY_CHECK_FAILED` and nothing is written.
 
-If the document store reports no size for the document, the AWS SDK has to buffer the body to
-determine `Content-Length`; the connector logs a warning when that happens. Documents created by
-the Camunda document store always carry a size.
+| Document | How it goes up | Verified against |
+| --- | --- | --- |
+| Camunda document up to 5 GiB | One `PutObject`, **streamed** from the document store, never buffered | The SHA-256 the Camunda document store recorded when the document was created — so what is stored is provably what the process received |
+| Camunda document over 5 GiB | Multipart upload, parts of 16 MiB (more for documents over 156 GiB, so that 10,000 parts suffice) | Each part's SHA-256, checked by STACKIT; the whole content's SHA-256 is compared with the document store's before the upload is completed, and the upload is aborted on a mismatch |
+| Inline or external-URL document, which carries no recorded checksum | Read in 16 MiB parts: one `PutObject` if it fits into one part, otherwise a multipart upload | The SHA-256 the connector computes while reading, checked by STACKIT per request or per part |
 
-**Uploads of Camunda documents are verified end to end.** Every Camunda document store records the
-SHA-256 of a document's content when the document is created (its `contentHash`, checked again on
-every read). The connector sends that hash as `x-amz-checksum-sha256`, and STACKIT compares it with
-the bytes it actually receives before storing anything: a mismatch is refused with
-`INTEGRITY_CHECK_FAILED` and nothing is written. This costs no extra read and no extra request,
-because the hash already exists. Inline and external-URL documents carry no such hash and are
-uploaded unverified; `integrityVerified` in the result says which case applied. Measured against
-STACKIT `eu01`, with and without SSE-S3.
+At most one part is held in memory at a time, and parts are sent one after another. A failed
+multipart upload is aborted, so no orphaned parts are left behind (if even the abort fails, the
+connector logs the upload id). Every Camunda document store records the SHA-256 as the document's
+`contentHash` (in-memory, local, AWS, GCP and Azure stores; Camunda 8.8 to 8.10); STACKIT verifies
+`x-amz-checksum-sha256` and nothing else (measured on `eu01`, see
+[Checksums](#checksums-not-configurable-and-deliberately-so)).
+
+A document of unknown size can be at most 156 GiB (10,000 parts of 16 MiB). Camunda documents
+always carry a size.
+
+**Object Lock on upload.** *Object Lock retention*, *Retain until* and *Legal hold* protect the
+uploaded version from the moment it exists — there is no window in which it is stored unprotected.
+They need a bucket created with Object Lock enabled; see [Object Lock](#object-lock).
 
 | Input | Required | Notes |
 | --- | --- | --- |
@@ -105,6 +114,9 @@ STACKIT `eu01`, with and without SSE-S3.
 | Metadata | no | FEEL context of strings, stored as `x-amz-meta-*` |
 | Tags | no | FEEL context of strings. Sent through the AWS SDK's `Tagging` model, which percent-encodes keys and values (a space becomes `%20`, never `+`). StorageGRID allows at most 10 tags per object |
 | Server-side encryption | no | `true` requests SSE-S3 (`AES256`) |
+| Object Lock retention | no | `NONE` (default), `GOVERNANCE` or `COMPLIANCE` — see [Object Lock](#object-lock) |
+| Retain until | with a retention | See [Retain until](#retain-until) |
+| Legal hold | no | `true` places a legal hold on the uploaded version |
 
 ```json
 {
@@ -121,7 +133,10 @@ STACKIT `eu01`, with and without SSE-S3.
     "contentType": "application/pdf",
     "metadata": { "orderid": "4711" },
     "tags": { "env": "prod" },
-    "serverSideEncryption": true
+    "serverSideEncryption": true,
+    "retentionMode": "GOVERNANCE",
+    "retainUntil": "P90D",
+    "legalHold": false
   }
 }
 ```
@@ -131,12 +146,22 @@ STACKIT `eu01`, with and without SSE-S3.
   "bucket": "invoices",
   "key": "2026/01/invoice-4711.pdf",
   "eTag": "\"9b2cf5...\"",
-  "versionId": null,
+  "versionId": "1D7F4C1A-...",
   "serverSideEncryption": "AES256",
-  "integrityVerified": true,
-  "checksumSha256": "q1MKE+RZFJgrefm34/uplM/R8/si9xzqGvvwK0YMbR0="
+  "checksumSha256": "q1MKE+RZFJgrefm34/uplM/R8/si9xzqGvvwK0YMbR0=",
+  "documentChecksumVerified": true,
+  "partCount": 1,
+  "objectLockMode": "GOVERNANCE",
+  "objectLockRetainUntilDate": "2026-04-15T10:30:00Z",
+  "objectLockLegalHold": false
 }
 ```
+
+`checksumSha256` is the Base64 SHA-256 of the stored content — worth keeping for an audit trail.
+`documentChecksumVerified` is `true` when the content also matched the checksum the Camunda
+document store recorded; `false` for inline and external documents, which have none. `partCount` is
+1 for a single request. `versionId` is set on versioned buckets, which includes every Object Lock
+bucket — keep it to address exactly this upload later.
 
 ### Download object
 
@@ -183,8 +208,12 @@ engine; the runtime raises a clear incident when the payload exceeds it and tell
 ### Delete object
 
 Deletes an object with `DeleteObject`. S3 delete is idempotent: deleting a key that does not exist
-succeeds. On a bucket with versioning enabled, a delete without a version id writes a delete marker
-rather than removing data, which the result reports.
+succeeds. On a bucket with versioning enabled — every Object Lock bucket is — a delete without a
+version id writes a delete marker rather than removing data, which the result reports.
+
+To remove a version under `GOVERNANCE` retention, pass its version id and set *Bypass governance
+retention*. Nothing removes a version under `COMPLIANCE` retention or a legal hold; STACKIT answers
+`ACCESS_DENIED`, and the message says that Object Lock may be the reason.
 
 ```json
 {
@@ -304,9 +333,15 @@ Reads an object's metadata with `HeadObject`, without downloading it.
   "eTag": "\"9b2cf5...\"",
   "lastModified": "2026-01-15T10:30:00Z",
   "metadata": { "orderid": "4711" },
-  "storageClass": "STANDARD"
+  "storageClass": "STANDARD",
+  "objectLockMode": "COMPLIANCE",
+  "objectLockRetainUntilDate": "2027-01-15T00:00:00Z",
+  "objectLockLegalHold": false
 }
 ```
+
+The three `objectLock*` fields report the Object Lock state of the version; they are `null` for an
+object without retention or legal hold.
 
 ### Create presigned download URL
 
@@ -373,6 +408,82 @@ expiration rules as above.
 }
 ```
 
+### Object Lock
+
+[Object Lock](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/)
+protects object *versions* against deletion and overwriting (WORM). It works only in a bucket
+created with Object Lock enabled, which also turns on versioning; it cannot be added to an existing
+bucket, and never removed from one. Apply it on upload (see [Upload object](#upload-object)), or
+afterwards with the two operations below. [Get object metadata](#get-object-metadata) reports it.
+
+| Protection | Can be shortened or removed | Notes |
+| --- | --- | --- |
+| `GOVERNANCE` retention | Yes, with *Bypass governance retention*, by credentials allowed to | Works without the project compliance lock |
+| `COMPLIANCE` retention | **No — by nobody, STACKIT included**, until it expires. Only extended | Requires the project compliance lock (see [Management connector](#management-connector)) |
+| Legal hold | Yes, by lifting it | No end date; independent of retention |
+
+> [!CAUTION]
+> **STACKIT caps a retention at 365 days.** A statutory retention of 6 or 10 years can only be met
+> by extending the retention, in steps of at most 365 days, before it lapses — an expired retention
+> cannot be reinstated. That makes the guarantee operational: it holds only as long as a process
+> keeps renewing it. See §7.2 of the
+> [compatibility notes](../../docs/stackit-object-storage-compatibility.md#72-365-days-is-not-610-years).
+
+#### Retain until
+
+Accepts an ISO-8601 period from now (`P30D`, `P1Y`, `PT12H`), a date (`2027-01-31`, meaning
+midnight UTC at the start of that day), or a date-time with offset (`2027-01-31T12:00:00Z`,
+`2027-01-31T12:00:00+01:00`). It is truncated to whole seconds and must lie in the future.
+
+#### Set object retention
+
+Sets, extends or — `GOVERNANCE` only, with *Bypass governance retention* — shortens the retention
+of a version with `PutObjectRetention`. Leave *Version ID* empty for the current version, but prefer
+the version id an upload returned: it addresses exactly what was uploaded.
+
+```json
+{
+  "operationType": "setObjectRetention",
+  "operation": {
+    "bucket": "archive",
+    "key": "2026/01/invoice-4711.pdf",
+    "versionId": "1D7F4C1A-...",
+    "mode": "COMPLIANCE",
+    "retainUntil": "P365D",
+    "bypassGovernanceRetention": false
+  }
+}
+```
+
+```json
+{
+  "bucket": "archive",
+  "key": "2026/01/invoice-4711.pdf",
+  "versionId": "1D7F4C1A-...",
+  "mode": "COMPLIANCE",
+  "retainUntilDate": "2027-01-15T10:30:00Z"
+}
+```
+
+#### Set legal hold
+
+Places (`legalHold: true`) or lifts (`legalHold: false`) a legal hold with `PutObjectLegalHold`.
+
+```json
+{
+  "operationType": "setObjectLegalHold",
+  "operation": { "bucket": "archive", "key": "2026/01/invoice-4711.pdf", "legalHold": true }
+}
+```
+
+```json
+{ "bucket": "archive", "key": "2026/01/invoice-4711.pdf", "versionId": null, "legalHold": true }
+```
+
+Both operations send their small XML body with an `x-amz-checksum-sha256`, which S3 requires for
+them and STACKIT verifies. On a bucket without Object Lock, STACKIT answers `INVALID_INPUT`
+(*"Bucket is missing Object Lock Configuration"*).
+
 ## Error codes
 
 Every failure is mapped onto one of the shared STACKIT connector error codes. Each message names the
@@ -381,13 +492,13 @@ bucket and key involved and says what to check. **A credential never appears in 
 | Code | Retried | Typical cause | What to do |
 | --- | --- | --- | --- |
 | `AUTHENTICATION_FAILED` | no | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, HTTP 401 | Check that the access key ID and secret belong together and still exist. A truncated secret is the usual cause — it is shown only once, at creation. |
-| `ACCESS_DENIED` | no | `AccessDenied`, HTTP 403 | The credential is valid but may not use this bucket: the bucket belongs to a different project, or a bucket policy denies this credentials group. |
+| `ACCESS_DENIED` | no | `AccessDenied`, HTTP 403 | The credential is valid but may not use this bucket: the bucket belongs to a different project, or a bucket policy denies this credentials group. On deleting a version, or shortening a retention, Object Lock is the more likely cause. |
 | `NOT_FOUND` | no | `NoSuchBucket`, `NoSuchKey`, HTTP 404 | Check the bucket name, the key, and that both exist in the selected region. `headObject` reports a missing key as `exists: false` instead, but still fails with `NOT_FOUND` for a missing bucket. |
 | `ALREADY_EXISTS` | no | HTTP 409 | Not expected from any operation of this connector — none of them creates a bucket. Report it, with the message. |
-| `INVALID_INPUT` | no | Invalid bucket name, malformed endpoint, bad or out-of-range expiration, HTTP 400 | Correct the task inputs. |
+| `INVALID_INPUT` | no | Invalid bucket name, malformed endpoint, bad or out-of-range expiration, an unusable retention mode or *Retain until*, Object Lock on a bucket without it, HTTP 400 | Correct the task inputs. The message quotes STACKIT's own explanation. |
 | `RATE_LIMITED` | **yes**, 5 s | `SlowDown`, HTTP 429 | STACKIT allows 2500 requests/s and 500 concurrent requests per project. Reduce concurrency if it persists. |
 | `SERVICE_UNAVAILABLE` | **yes**, 10 s (except HTTP 501) | HTTP 5xx | Transient. HTTP 501 is *not* retried: STACKIT returns it for S3 features it does not implement at all, and repeating the request cannot change that. |
-| `INTEGRITY_CHECK_FAILED` | no | `BadDigest`: the uploaded bytes do not match the document store's SHA-256 | Nothing was stored. The content read back from the Camunda document store differs from what was stored there — check the document store; a retry would send the same damaged content. |
+| `INTEGRITY_CHECK_FAILED` | no | `BadDigest`: the bytes STACKIT received do not match the SHA-256 sent with them; or the content read from the Camunda document store does not match the SHA-256 it recorded | Nothing was stored, and a started multipart upload was aborted. If the document store's checksum was involved, the document store returned content that differs from what it recorded — check it; a retry would send the same damaged content. |
 | `CONNECTION_ERROR` | **yes**, 5 s | A client-side failure caused by the network — an `IOException` in its cause chain (DNS failure, connection refused, TLS failure, connect timeout after 10 s, no data for 60 s) — or an API-call / API-call-attempt timeout | Check network egress from the connector runtime, proxy configuration, and the region or custom endpoint. |
 | `UNEXPECTED_ERROR` | no | Anything unmapped — including a client-side failure that is not network-related, such as a request the SDK cannot build, which no retry can fix | Treat as a bug report; the message carries the original failure. |
 
@@ -475,9 +586,11 @@ connector does not use it. STACKIT switch checksums off in their own examples to
 (`checksumAlgorithm = ""` for Velero, `skip_s3_checksum = true` for Terraform). Full measurements:
 [compatibility notes, §2.7](../../docs/stackit-object-storage-compatibility.md#27-measured-what-stackit-does-with-checksums).
 
-The one checksum the connector does send is the opposite case: the SHA-256 of a Camunda document,
-as an `x-amz-checksum-sha256` **header**, which is exactly what StorageGRID verifies (see
-[Upload object](#upload-object)).
+The checksums the connector does send are the opposite case: SHA-256 values it supplies itself, as
+`x-amz-checksum-sha256` **headers**, which is exactly what StorageGRID verifies — on every upload
+request, on every part of a multipart upload (declared up front on `CreateMultipartUpload`, which
+STACKIT requires before it accepts part checksums), and on the Object Lock requests. See
+[Upload object](#upload-object). `OperationChecksumWireTest` pins those on the wire.
 
 This is asserted by `ChecksumHeaderRegressionTest`, which records the request the SDK would put on
 the wire and checks the headers *and* the body bytes. The presigner needs no such setting —
@@ -498,22 +611,135 @@ Details and sources:
   SSE-C is not exposed in v1, because a customer-provided key would have to travel through process
   variables.
 - **5 TB maximum object size**, 5 GB per multipart part, 10,000 parts. NetApp additionally state
-  that *future* StorageGRID releases will not support single `PutObject` uploads above 5 GiB — this
-  connector performs single-part uploads only, so route anything larger through a presigned upload
-  URL and a multipart-capable client for now.
+  that *future* StorageGRID releases will not support single `PutObject` uploads above 5 GiB, which
+  is why the connector switches to a multipart upload above 5 GiB. A presigned upload URL is a
+  single `PutObject` and is therefore subject to that limit.
 - **1,000 buckets per STACKIT project**, 1,000 credentials groups, 1,000 versions per object, and a
   500 TB tenant quota (raisable via Support).
 - **Bucket names are globally unique.** STACKIT's own documentation contradicts itself here — the
   concepts page says "unique within a region", the limits page says "unique within the whole
-  system". Treat them as globally unique when you create buckets; this connector creates none, so it
-  never meets the conflict itself.
+  system". Treat them as globally unique when you create buckets. The management connector's
+  *Create bucket* reports a name that is already taken as `ALREADY_EXISTS`.
 - **Rate limits** of 2500 requests/s and 500 concurrent requests per project.
-- **No bucket or credential management.** Those live in the STACKIT management API, which this
-  connector does not use.
-- **No pagination, no multipart, no object versioning beyond passing a version id through, no
-  bucket policies, no lifecycle rules, no Object Lock.** All out of scope for v1.
+- **Object Lock retention is capped at 365 days** by STACKIT, and `COMPLIANCE` retention cannot be
+  undone by anyone. See [Object Lock](#object-lock).
+- **Not covered:** listing object versions and delete markers, reading or changing the tags of an
+  existing object, deleting many objects in one call, bucket policies, lifecycle rules, CORS,
+  SSE-C and presigned POST forms. Listing returns one page per task; pass `nextContinuationToken`
+  back for the next.
 - **No S3 event notifications**, so no inbound connector is possible: STACKIT supports reading a
   notification configuration but not writing one.
+
+## Management connector
+
+The same jar contains a second connector, **STACKIT Object Storage Management**. It has its own
+element template and its own job type, `de.envite:stackit-object-storage-management:1`. It talks to
+the STACKIT Object Storage **management API** (`https://object-storage.api.stackit.cloud`, v2)
+rather than to the S3 data plane. Use it to provision from within a process what the data-plane
+connector needs: a bucket per customer, a credentials group and access key per tenant, or Object
+Lock for an archive.
+
+**Why a second template rather than more operations.** The two APIs take different credentials.
+The S3 data plane signs with an access key of a credentials group; the management API takes a
+STACKIT **service account**. One template with both would show two unrelated sets of credentials,
+and the modeller would have to guess which one an operation uses.
+
+### Authentication
+
+Authentication uses a STACKIT service account key.
+1. Paste the key JSON downloaded from the STACKIT Portal into a Camunda secret.
+2. Reference that secret in the template, for example `{{secrets.STACKIT_SERVICE_ACCOUNT_KEY}}`.
+
+The connector signs a short-lived JWT with the key and exchanges it for an access token. It caches
+that token across jobs until shortly before it expires. The connector also accepts STACKIT's
+long-lived access token, but STACKIT has deprecated it and announced its removal.
+
+**Required role.** The service account needs the project role **`object-storage.admin`**. A new
+service account has no role at all, and `reader` allows only the read operations. Grant the role in
+the STACKIT Portal under *IAM and Management > Access*, or with the CLI:
+
+```bash
+stackit project member add <service-account-email> --project-id <project-id> --role object-storage.admin
+```
+
+The service account email is the `credentials.iss` value in the key JSON. If a permission is
+missing, the task fails with `ACCESS_DENIED`. The message names the missing permission (for example
+`object-storage.bucket.create`) and this role.
+
+### Configuration
+
+| Input | Notes |
+| --- | --- |
+| Project ID | The UUID of the STACKIT project. |
+| Region | `eu01` or `eu02`. Buckets and credentials groups exist per region. |
+| Custom management endpoint | Optional. Must be an `https` URL on a `stackit.cloud` host. The connector sends the service account's bearer token there, and that token works for every API the service account may use. Any other URL fails with `INVALID_INPUT`. |
+
+### Operations
+
+| Operation | STACKIT API | Notes |
+| --- | --- | --- |
+| Get service status | `GetServiceStatus` | Whether Object Storage is enabled for the project in the region. `NOT_FOUND` if it is not. |
+| List buckets | `ListBuckets` | Name, region, `objectLockEnabled` and both URL styles of every bucket. |
+| Get bucket | `GetBucket` | `NOT_FOUND` if the bucket does not exist in this project and region. |
+| Create bucket | `CreateBucket` | Bucket names are **global across all STACKIT customers**; a name that is taken fails with `ALREADY_EXISTS`. **Object Lock** can be enabled only here, at creation. It can never be disabled, and it requires the project compliance lock. |
+| Delete bucket | `DeleteBucket` | Only empty buckets can be deleted. |
+| List credentials groups | `ListCredentialsGroups` | Includes each group's URN, which bucket policies name as the principal. |
+| Create credentials group | `CreateCredentialsGroup` | The display name must be 1 to 32 characters. |
+| Delete credentials group | `DeleteCredentialsGroup` | Also deletes the group's access keys. |
+| List access keys | `ListAccessKeys` | Key ID, obfuscated display name and expiry; never a secret. Leave the credentials group ID empty for the default group. |
+| Create access key | `CreateAccessKey` | Returns the **secret access key**; read the caution below. *Expires* takes an ISO-8601 date-time with offset (`2027-01-31T00:00:00Z`) or a duration from now (`P90D`). Leave it empty for a key that never expires. |
+| Delete access key | `DeleteAccessKey` | Takes the `keyId` returned by *Create access key* or *List access keys*, not the access key ID used for signing. |
+| Get compliance lock | `GetComplianceLock` | Reports `enabled: false`, instead of failing, when the project has no compliance lock. |
+| Create compliance lock | `CreateComplianceLock` | Required before this connector can create an Object Lock bucket or set a default retention: without it STACKIT answers `CONFLICT` (*"compliance_lock.required"*), measured on eu01. The S3 API — and so the data-plane connector's uploads with `GOVERNANCE` retention — works without it. |
+| Delete compliance lock | `DeleteComplianceLock` | Fails with `CONFLICT` while any Object Lock bucket exists in the project. |
+| Get default retention | `GetDefaultRetention` | Mode and number of days of an Object Lock bucket's default retention. |
+| Set default retention | `SetDefaultRetention` | `GOVERNANCE` or `COMPLIANCE`, 1 to 365 days (STACKIT's maximum). Applies to every object version written afterwards. |
+| Delete default retention | `DeleteDefaultRetention` | Object versions that are already locked stay locked. |
+
+> [!WARNING]
+> **`COMPLIANCE` retention is irreversible.** Until it expires, nobody can shorten or remove it, or
+> delete an object version it protects. Not you, not STACKIT Support.
+>
+> The project compliance lock is similarly hard to undo: while any Object Lock bucket exists, it
+> cannot be removed.
+>
+> Use `GOVERNANCE` unless a regulation demands `COMPLIANCE`. STACKIT caps retention at 365 days;
+> see §7.2 of the
+> [compatibility notes](../../docs/stackit-object-storage-compatibility.md#72-365-days-is-not-610-years).
+
+> [!CAUTION]
+> **The secret access key ends up in a process variable.** *Create access key* returns
+> `secretAccessKey`, and STACKIT shows it exactly once. The variable it is written to is stored
+> with the process instance, **visible to everyone who can open the instance in Operate**, and kept
+> in the history after the instance completes.
+>
+> Do not map the whole result into a long-lived variable. Instead:
+> 1. Use a **result expression** that keeps only what the next step needs.
+> 2. Hand the secret straight to where it belongs, for example a task that writes it into your
+>    secret store.
+> 3. Clear the variable afterwards.
+>
+> ```feel
+> = { newKeyId: response.keyId, newAccessKey: response.accessKey, newSecret: response.secretAccessKey }
+> ```
+>
+> The connector itself never logs the secret: the result's `toString()` redacts it.
+
+### Management error codes
+
+The management connector uses the same codes as the data-plane connector (see
+[Error codes](#error-codes)), plus `CONFLICT`:
+
+| HTTP | Code | Retried |
+| --- | --- | --- |
+| 400, 422 | `INVALID_INPUT`, with STACKIT's validation detail | no |
+| 401 | `AUTHENTICATION_FAILED`: the key was deleted or deactivated | no |
+| 403 | `ACCESS_DENIED`: the message names the missing permission and the role `object-storage.admin` | no |
+| 404 | `NOT_FOUND`: the resource does not exist, or Object Storage is not enabled for the project in that region | no |
+| 409 | `ALREADY_EXISTS` for the create operations, `CONFLICT` for all others (for example deleting the compliance lock while Object Lock buckets exist) and for anything STACKIT refuses because the project compliance lock is missing | no |
+| 429 | `RATE_LIMITED`, honouring `Retry-After` | **yes** |
+| 5xx except 501 | `SERVICE_UNAVAILABLE` | **yes** |
+| network failure | `CONNECTION_ERROR` | **yes** |
 
 ## Element template
 
@@ -522,6 +748,9 @@ The element template is generated from the connector's annotations — do not ha
 - [`element-templates/stackit-object-storage-outbound-connector.json`](element-templates/stackit-object-storage-outbound-connector.json)
 - [`element-templates/hybrid/stackit-object-storage-outbound-connector-hybrid.json`](element-templates/hybrid/stackit-object-storage-outbound-connector-hybrid.json)
   — for a hybrid setup, where a self-managed connector runtime serves a SaaS cluster
+- [`element-templates/stackit-object-storage-management-outbound-connector.json`](element-templates/stackit-object-storage-management-outbound-connector.json)
+  and its [hybrid variant](element-templates/hybrid/stackit-object-storage-management-outbound-connector-hybrid.json)
+  — the [Management connector](#management-connector)
 
 Install it by copying the JSON into the `.camunda/element-templates/` directory of a Desktop Modeler
 project, or by uploading it to a Web Modeler project.
@@ -560,7 +789,7 @@ normal build. CI checks instead of applying:
 
 ### Live tests against real STACKIT
 
-Opt-in, and never run in CI. Two test classes in
+Opt-in, and never run in CI. Three test classes in
 [`src/test/java/.../objectstorage/live/`](src/test/java/de/envite/camunda/stackit/objectstorage/live/)
 talk to a real STACKIT bucket:
 
@@ -572,8 +801,18 @@ talk to a real STACKIT bucket:
   and writes `FINDING` lines to `target/stackit-live-findings.txt`. The `eu01` results of
   2026-11-10 are in §2.7 of the compatibility notes; re-run it after AWS SDK upgrades and in
   `eu02`.
+- `ObjectStorageManagementLiveIT` drives the management connector:
+  - it creates and deletes a bucket;
+  - it creates and deletes a credentials group and an access key, and proves that the new key works
+    against S3;
+  - if the project allows an Object Lock bucket, it creates an empty one and sets a one-day
+    `GOVERNANCE` default retention on it.
 
-Both are tagged `@Tag("live")`, excluded from every normal build, and run only under the
+  It never touches the compliance lock and never uses `COMPLIANCE`. It needs
+  `STACKIT_IT_PROJECT_ID`, `STACKIT_IT_SERVICE_ACCOUNT_KEY_FILE` and the role
+  `object-storage.admin`; without the two variables it is skipped.
+
+All three are tagged `@Tag("live")`, excluded from every normal build, and run only under the
 `stackit-live` Maven profile, which runs them instead of the container-backed integration tests.
 From the repository root:
 

@@ -1,0 +1,15 @@
+{
+  "authentication": {
+    "type": "serviceAccountKey",
+    "serviceAccountKey": "{{secrets.STACKIT_SERVICE_ACCOUNT_KEY}}"
+  },
+  "configuration": {
+    "projectId": "cd5e788d-5b7b-4ab9-a20d-e790205df10b",
+    "region": "EU01"
+  },
+  "operationType": "createAccessKey",
+  "operation": {
+    "credentialsGroupId": "3969597f-d2f3-4c07-8533-1a4bf8159c0e",
+    "expires": "P90D"
+  }
+}

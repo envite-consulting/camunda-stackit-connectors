@@ -21,7 +21,10 @@ import io.camunda.connector.api.document.Document;
 import io.camunda.connector.generator.java.annotation.TemplateDocumentProperty;
 import io.camunda.connector.generator.java.annotation.TemplateProperty;
 import io.camunda.connector.generator.java.annotation.TemplateProperty.DefaultValueType;
+import io.camunda.connector.generator.java.annotation.TemplateProperty.DropdownPropertyChoice;
 import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyBinding;
+import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyCondition;
+import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyType;
 import io.camunda.connector.generator.java.annotation.TemplateSubType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -31,9 +34,14 @@ import java.util.Map;
 /**
  * Uploads a document into a STACKIT Object Storage bucket with {@code PutObject}.
  *
- * <p>The document is streamed from the Camunda document store straight into the S3 request; it is
- * never buffered as a byte array, so an object may be as large as the 5 TB STACKIT allows for a
- * single object.
+ * <p>Every upload carries a SHA-256 that STACKIT checks before it stores anything. A Camunda
+ * document up to 5 GiB is streamed in a single {@code PutObject}, checked against the SHA-256 the
+ * document store recorded when the document was created. Anything else - a larger document, or a
+ * document without that checksum - is read in parts that are hashed and checked one by one, and
+ * above one part sent as a multipart upload. See {@code DocumentUploader}.
+ *
+ * <p>The Object Lock inputs apply retention and legal hold atomically with the upload, so the
+ * object is never stored unprotected, not even for a moment.
  *
  * @param bucket the bucket to upload into; required
  * @param key the object key; optional, defaults to the file name of {@code document}
@@ -42,13 +50,17 @@ import java.util.Map;
  * @param metadata user metadata stored with the object; optional
  * @param tags object tags; optional
  * @param serverSideEncryption requests SSE-S3 ({@code AES256}) when {@code true}; optional
+ * @param retentionMode {@code NONE}, {@code GOVERNANCE} or {@code COMPLIANCE}; optional
+ * @param retainUntil when the retention ends; required if a retention mode is set
+ * @param legalHold places an Object Lock legal hold when {@code true}; optional
  */
 @TemplateSubType(
     id = UploadObject.ID,
     label = "Upload object",
     description =
-        "Uploads a document to a bucket (PutObject). Streams the document, so objects up to the"
-            + " STACKIT limit of 5 TB are supported.",
+        "Uploads a document to a bucket. STACKIT verifies a SHA-256 checksum of every upload"
+            + " before storing it; documents over 5 GiB go up as a multipart upload. Can apply"
+            + " Object Lock retention and legal hold with the upload.",
     keywords = {"upload", "put", "store", "write", "putObject", "upload file", "save file"})
 public record UploadObject(
     @TemplateProperty(
@@ -128,7 +140,54 @@ public record UploadObject(
                 "Requests SSE-S3 (AES256), where STACKIT manages the encryption key. STACKIT"
                     + " supports SSE-S3 and SSE-C only; there is no SSE-KMS, so no key ARN can be"
                     + " supplied. Leave off to store the object unencrypted at the object level.")
-        Boolean serverSideEncryption)
+        Boolean serverSideEncryption,
+    @TemplateProperty(
+            id = "uploadObjectRetentionMode",
+            binding = @PropertyBinding(name = "operation.retentionMode"),
+            label = "Object Lock retention",
+            group = TemplateGroups.OPERATION,
+            optional = true,
+            type = PropertyType.Dropdown,
+            defaultValue = ObjectLocks.NONE,
+            choices = {
+              @DropdownPropertyChoice(value = ObjectLocks.NONE, label = "None"),
+              @DropdownPropertyChoice(value = ObjectLocks.GOVERNANCE, label = "Governance"),
+              @DropdownPropertyChoice(value = ObjectLocks.COMPLIANCE, label = "Compliance")
+            },
+            description =
+                "Protects the uploaded version against deletion and overwriting until 'Retain"
+                    + " until'. Needs a bucket created with Object Lock enabled. COMPLIANCE can"
+                    + " never be shortened or removed, by anyone, and needs the project compliance"
+                    + " lock; GOVERNANCE can be lifted by credentials allowed to bypass it.")
+        String retentionMode,
+    @TemplateProperty(
+            id = "uploadObjectRetainUntil",
+            binding = @PropertyBinding(name = "operation.retainUntil"),
+            label = "Retain until",
+            group = TemplateGroups.OPERATION,
+            optional = true,
+            condition =
+                @PropertyCondition(
+                    property = "uploadObjectRetentionMode",
+                    oneOf = {ObjectLocks.GOVERNANCE, ObjectLocks.COMPLIANCE}),
+            description =
+                "When the retention ends: "
+                    + ObjectLocks.RETAIN_UNTIL_FORMATS
+                    + ". At most 365 days ahead on STACKIT.")
+        String retainUntil,
+    @TemplateProperty(
+            id = "uploadObjectLegalHold",
+            binding = @PropertyBinding(name = "operation.legalHold"),
+            label = "Legal hold",
+            group = TemplateGroups.OPERATION,
+            optional = true,
+            defaultValue = "false",
+            defaultValueType = DefaultValueType.Boolean,
+            description =
+                "Places an Object Lock legal hold on the uploaded version: it cannot be deleted"
+                    + " or overwritten until the hold is lifted with 'Set legal hold'. Needs a"
+                    + " bucket created with Object Lock enabled.")
+        Boolean legalHold)
     implements ObjectStorageOperation {
 
   /** The {@code operationType} discriminator value of this operation. */

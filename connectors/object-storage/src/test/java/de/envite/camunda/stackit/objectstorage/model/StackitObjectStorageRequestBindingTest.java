@@ -28,6 +28,8 @@ import de.envite.camunda.stackit.objectstorage.model.request.ListObjects;
 import de.envite.camunda.stackit.objectstorage.model.request.ObjectStorageOperation;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignDownloadUrl;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignUploadUrl;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectLegalHold;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectRetention;
 import de.envite.camunda.stackit.objectstorage.model.request.StackitObjectStorageRequest;
 import de.envite.camunda.stackit.objectstorage.model.request.UploadObject;
 import de.envite.camunda.stackit.objectstorage.support.TestRequests;
@@ -74,7 +76,9 @@ class StackitObjectStorageRequestBindingTest {
         Arguments.of("listObjects", ListObjects.class),
         Arguments.of("headObject", HeadObject.class),
         Arguments.of("presignDownloadUrl", PresignDownloadUrl.class),
-        Arguments.of("presignUploadUrl", PresignUploadUrl.class));
+        Arguments.of("presignUploadUrl", PresignUploadUrl.class),
+        Arguments.of("setObjectRetention", SetObjectRetention.class),
+        Arguments.of("setObjectLegalHold", SetObjectLegalHold.class));
   }
 
   @ParameterizedTest(name = "{0} binds to {1}")
@@ -119,6 +123,9 @@ class StackitObjectStorageRequestBindingTest {
       assertThat(operation.metadata()).containsExactly(Map.entry("orderId", "4711"));
       assertThat(operation.tags()).containsExactly(Map.entry("env", "prod"));
       assertThat(operation.serverSideEncryption()).isTrue();
+      assertThat(operation.retentionMode()).isEqualTo("GOVERNANCE");
+      assertThat(operation.retainUntil()).isEqualTo("2027-01-31");
+      assertThat(operation.legalHold()).isTrue();
       assertThat(operation.document()).isNotNull();
       assertThat(operation.document().metadata().getFileName()).isEqualTo("greeting.txt");
       assertThat(operation.document().metadata().getContentType()).isEqualTo("text/plain");
@@ -163,12 +170,28 @@ class StackitObjectStorageRequestBindingTest {
   class RemainingOperations {
 
     @Test
-    @DisplayName("deleteObject binds bucket, key and version id")
+    @DisplayName("deleteObject binds bucket, key, version id and the governance bypass")
     void deleteObject() {
       final DeleteObject operation = (DeleteObject) bind("deleteObject").operation();
 
       assertThat(operation)
-          .isEqualTo(new DeleteObject("stackit-invoices", "2026/01/invoice.pdf", "v7"));
+          .isEqualTo(new DeleteObject("stackit-invoices", "2026/01/invoice.pdf", "v7", true));
+    }
+
+    @Test
+    @DisplayName("setObjectRetention binds mode, retain-until and the governance bypass")
+    void setObjectRetention() {
+      assertThat(bind("setObjectRetention").operation())
+          .isEqualTo(
+              new SetObjectRetention(
+                  "stackit-archive", "2026/01/invoice.pdf", "v7", "COMPLIANCE", "P365D", false));
+    }
+
+    @Test
+    @DisplayName("setObjectLegalHold binds the hold flag")
+    void setObjectLegalHold() {
+      assertThat(bind("setObjectLegalHold").operation())
+          .isEqualTo(new SetObjectLegalHold("stackit-archive", "2026/01/invoice.pdf", "v7", true));
     }
 
     @Test

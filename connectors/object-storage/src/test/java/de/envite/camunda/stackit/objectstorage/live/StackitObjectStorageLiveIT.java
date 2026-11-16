@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
+import de.envite.camunda.stackit.objectstorage.core.UploadLimits;
 import de.envite.camunda.stackit.objectstorage.model.response.CopyObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.DownloadObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.HeadObjectResult;
@@ -161,7 +162,7 @@ class StackitObjectStorageLiveIT {
     assertThat(upload.eTag())
         .as("a single-part PUT's ETag is the MD5 of exactly the bytes STACKIT stored")
         .isEqualTo('"' + md5Hex(binary) + '"');
-    assertThat(upload.integrityVerified())
+    assertThat(upload.documentChecksumVerified())
         .as("STACKIT verified the bytes against the document store's SHA-256")
         .isTrue();
   }
@@ -226,7 +227,7 @@ class StackitObjectStorageLiveIT {
                     true));
 
     assertThat(upload.serverSideEncryption()).isEqualTo("AES256");
-    assertThat(upload.integrityVerified())
+    assertThat(upload.documentChecksumVerified())
         .as("the SHA-256 check also works together with SSE-S3")
         .isTrue();
   }
@@ -512,6 +513,77 @@ class StackitObjectStorageLiveIT {
         .isInstanceOfSatisfying(
             ConnectorException.class,
             e -> assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.AUTHENTICATION_FAILED));
+  }
+
+  @Test
+  @Order(14)
+  @DisplayName("uploads a large document as a multipart upload STACKIT verifies part by part")
+  void uploadsInParts() {
+    final int mib = 1024 * 1024;
+    final ConnectorHarness multipart =
+        harness.withUploadLimits(new UploadLimits(5L * mib, 5 * mib, 10_000));
+    final byte[] content = new byte[11 * mib + 3];
+    new Random(42).nextBytes(content);
+    final String key = prefix + "multipart/large.bin";
+
+    final UploadObjectResult upload =
+        (UploadObjectResult)
+            multipart.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    config.bucket(),
+                    "key",
+                    key,
+                    "document",
+                    ConnectorHarness.documentVariable(
+                        multipart.createDocument(content, "large.bin", "application/octet-stream")),
+                    "serverSideEncryption",
+                    true));
+
+    assertThat(upload.partCount()).isEqualTo(3);
+    assertThat(upload.documentChecksumVerified()).isTrue();
+    assertThat(upload.serverSideEncryption()).isEqualTo("AES256");
+    assertThat(upload.eTag()).as("a multipart ETag carries the part count").endsWith("-3\"");
+    assertThat(rawGet(key).asByteArray()).isEqualTo(content);
+  }
+
+  @Test
+  @Order(15)
+  @DisplayName("uploads an inline document, which carries no checksum, with a computed SHA-256")
+  void uploadsAnInlineDocument() {
+    final String key = prefix + "inline/greeting.txt";
+
+    final UploadObjectResult upload =
+        (UploadObjectResult)
+            harness.run(
+                "uploadObject",
+                Map.of(
+                    "bucket",
+                    config.bucket(),
+                    "key",
+                    key,
+                    "document",
+                    Map.of(
+                        "camunda.document.type",
+                        "inline",
+                        "content",
+                        new String(TEXT, StandardCharsets.UTF_8),
+                        "name",
+                        "greeting.txt",
+                        "contentType",
+                        "text/plain")));
+
+    assertThat(upload.documentChecksumVerified()).isFalse();
+    assertThat(upload.checksumSha256())
+        .isEqualTo(
+            java.util.Base64.getEncoder()
+                .encodeToString(
+                    HexFormat.of()
+                        .parseHex(
+                            de.envite.camunda.stackit.objectstorage.support.ClusterLikeDocumentStore
+                                .sha256Hex(TEXT))));
+    assertThat(rawGet(key).asByteArray()).isEqualTo(TEXT);
   }
 
   private static ResponseBytes<GetObjectResponse> rawGet(final String key) {
