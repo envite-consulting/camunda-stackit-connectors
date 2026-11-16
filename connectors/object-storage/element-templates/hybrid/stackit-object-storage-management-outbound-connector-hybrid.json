@@ -1,0 +1,673 @@
+{
+  "$schema" : "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+  "name" : "Hybrid STACKIT Object Storage Management Outbound Connector",
+  "id" : "de.envite.connectors.stackit.objectstorage.management.v1-hybrid",
+  "description" : "Administers STACKIT Object Storage through the STACKIT management API with a service account: creates and deletes buckets, credentials groups and access keys, and manages the project compliance lock and the default retention of Object Lock buckets.",
+  "keywords" : [ "STACKIT", "object storage", "bucket", "create bucket", "access key", "credentials group", "object lock", "compliance lock", "retention", "sovereign cloud" ],
+  "documentationRef" : "https://github.com/envite-consulting/camunda-stackit-connectors/blob/main/connectors/object-storage/README.md#management-connector",
+  "version" : 1,
+  "category" : {
+    "id" : "connectors",
+    "name" : "Connectors"
+  },
+  "appliesTo" : [ "bpmn:Task" ],
+  "elementType" : {
+    "value" : "bpmn:ServiceTask"
+  },
+  "engines" : {
+    "camunda" : "^8.10"
+  },
+  "groups" : [ {
+    "id" : "taskDefinitionType",
+    "label" : "Task definition type"
+  }, {
+    "id" : "authentication",
+    "label" : "Authentication"
+  }, {
+    "id" : "configuration",
+    "label" : "Configuration"
+  }, {
+    "id" : "operation",
+    "label" : "Operation"
+  }, {
+    "id" : "connector",
+    "label" : "Connector"
+  }, {
+    "id" : "output",
+    "label" : "Output mapping"
+  }, {
+    "id" : "error",
+    "label" : "Error handling"
+  }, {
+    "id" : "retries",
+    "label" : "Retries"
+  } ],
+  "properties" : [ {
+    "id" : "taskDefinitionType",
+    "value" : "de.envite:stackit-object-storage-management:1",
+    "group" : "taskDefinitionType",
+    "binding" : {
+      "property" : "type",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.type",
+    "label" : "Authentication",
+    "description" : "How the connector authenticates against STACKIT. Use a service account key unless you still hold a long-lived access token, which STACKIT has deprecated.",
+    "value" : "serviceAccountKey",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.type",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Service account key",
+      "value" : "serviceAccountKey"
+    }, {
+      "name" : "Access token (deprecated)",
+      "value" : "accessToken"
+    } ]
+  }, {
+    "id" : "authentication.serviceAccountKey",
+    "label" : "Service account key",
+    "description" : "The complete contents of the service account key JSON file downloaded from the STACKIT Portal, including the enclosing braces. It contains a private key, so store it as a Camunda secret and reference it here, for example {{secrets.STACKIT_SERVICE_ACCOUNT_KEY}}.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.serviceAccountKey",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "authentication.type",
+      "equals" : "serviceAccountKey",
+      "type" : "simple"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "authentication.privateKey",
+    "label" : "Private key (optional)",
+    "description" : "Only needed when you generated the key pair yourself, so that the key JSON has no credentials.privateKey. Paste the PKCS#8 PEM private key, beginning with -----BEGIN PRIVATE KEY-----, and store it as a Camunda secret. Ignored when the key JSON already carries a private key.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.privateKey",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "authentication.type",
+      "equals" : "serviceAccountKey",
+      "type" : "simple"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "authentication.accessToken",
+    "label" : "Access token",
+    "description" : "A STACKIT service account access token. Store it as a Camunda secret and reference it here, for example {{secrets.STACKIT_ACCESS_TOKEN}}. Deprecated by STACKIT: removal was announced for the end of Q2 2026, which has passed, so the token may no longer work. Prefer a service account key.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.accessToken",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "authentication.type",
+      "equals" : "accessToken",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "configuration.projectId",
+    "label" : "Project ID",
+    "description" : "The ID of the STACKIT project whose Object Storage is administered, a UUID such as cd5e788d-5b7b-4ab9-a20d-e790205df10b.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\s*$",
+        "message" : "must be a UUID"
+      }
+    },
+    "feel" : "optional",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.projectId",
+      "type" : "zeebe:input"
+    },
+    "tooltip" : "Shown in the STACKIT Portal on the project's dashboard, and by <code>stackit project list</code>.",
+    "type" : "String"
+  }, {
+    "id" : "configuration.region",
+    "label" : "Region",
+    "description" : "The STACKIT region whose Object Storage is administered. Buckets and credentials groups exist per region.",
+    "optional" : false,
+    "value" : "EU01",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.region",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "eu01 (Germany)",
+      "value" : "EU01"
+    }, {
+      "name" : "eu02 (Austria)",
+      "value" : "EU02"
+    } ]
+  }, {
+    "id" : "configuration.endpoint",
+    "label" : "Custom management endpoint",
+    "description" : "Optional. Replaces https://object-storage.api.stackit.cloud. Must be an https URL on a stackit.cloud host, because the connector sends the service account's access token to it. Leave empty for normal use.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.endpoint",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "operationType",
+    "label" : "Operation",
+    "description" : "The STACKIT Object Storage management operation this task performs.",
+    "value" : "listBuckets",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operationType",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Get service status",
+      "value" : "getServiceStatus"
+    }, {
+      "name" : "List buckets",
+      "value" : "listBuckets"
+    }, {
+      "name" : "Get bucket",
+      "value" : "getBucket"
+    }, {
+      "name" : "Create bucket",
+      "value" : "createBucket"
+    }, {
+      "name" : "Delete bucket",
+      "value" : "deleteBucket"
+    }, {
+      "name" : "List credentials groups",
+      "value" : "listCredentialsGroups"
+    }, {
+      "name" : "Create credentials group",
+      "value" : "createCredentialsGroup"
+    }, {
+      "name" : "Delete credentials group",
+      "value" : "deleteCredentialsGroup"
+    }, {
+      "name" : "List access keys",
+      "value" : "listAccessKeys"
+    }, {
+      "name" : "Create access key",
+      "value" : "createAccessKey"
+    }, {
+      "name" : "Delete access key",
+      "value" : "deleteAccessKey"
+    }, {
+      "name" : "Get compliance lock",
+      "value" : "getComplianceLock"
+    }, {
+      "name" : "Create compliance lock",
+      "value" : "createComplianceLock"
+    }, {
+      "name" : "Delete compliance lock",
+      "value" : "deleteComplianceLock"
+    }, {
+      "name" : "Get default retention",
+      "value" : "getDefaultRetention"
+    }, {
+      "name" : "Set default retention",
+      "value" : "setDefaultRetention"
+    }, {
+      "name" : "Delete default retention",
+      "value" : "deleteDefaultRetention"
+    } ]
+  }, {
+    "id" : "getBucketBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of the bucket to read.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getBucket",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "createBucketBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of the new bucket: 3 to 63 lowercase letters, digits and hyphens, starting and ending with a letter or digit. Bucket names are global across all STACKIT customers.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "createBucket",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "createBucketObjectLockEnabled",
+    "label" : "Enable Object Lock",
+    "description" : "Creates the bucket with S3 Object Lock (WORM), which also turns on versioning. Only possible at creation and irreversible: Object Lock can never be disabled on this bucket. STACKIT requires the project compliance lock to exist first.",
+    "optional" : true,
+    "value" : false,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.objectLockEnabled",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "createBucket",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
+    "id" : "deleteBucketBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of the bucket to delete. It must be empty.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteBucket",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "createCredentialsGroupDisplayName",
+    "label" : "Display name",
+    "description" : "Name of the new credentials group, 1 to 32 characters.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.displayName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "createCredentialsGroup",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteCredentialsGroupCredentialsGroupId",
+    "label" : "Credentials group ID",
+    "description" : "ID (UUID) of the credentials group to delete.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.credentialsGroupId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteCredentialsGroup",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listAccessKeysCredentialsGroupId",
+    "label" : "Credentials group ID",
+    "description" : "ID (UUID) of the credentials group. Leave empty for the default group.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.credentialsGroupId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listAccessKeys",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "createAccessKeyCredentialsGroupId",
+    "label" : "Credentials group ID",
+    "description" : "ID (UUID) of the credentials group the key is created in. Leave empty for the default group.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.credentialsGroupId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "createAccessKey",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "createAccessKeyExpires",
+    "label" : "Expires",
+    "description" : "When the key stops working: an ISO-8601 date-time with offset such as 2027-01-31T00:00:00Z, or a duration from now such as P90D. Leave empty for a key that never expires.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.expires",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "createAccessKey",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteAccessKeyKeyId",
+    "label" : "Key ID",
+    "description" : "The keyId of the access key, as returned by Create access key and List access keys. Not the access key ID used for signing.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.keyId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteAccessKey",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "deleteAccessKeyCredentialsGroupId",
+    "label" : "Credentials group ID",
+    "description" : "ID (UUID) of the credentials group the key belongs to. Leave empty for the default group.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.credentialsGroupId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteAccessKey",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getDefaultRetentionBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of an Object Lock bucket.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getDefaultRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setDefaultRetentionBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of an Object Lock bucket.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setDefaultRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setDefaultRetentionMode",
+    "label" : "Mode",
+    "description" : "GOVERNANCE: credentials allowed to bypass governance retention can still shorten or remove it. COMPLIANCE: nobody can shorten or remove it, and objects cannot be deleted until it expires. Choose COMPLIANCE only if that is exactly what you need.",
+    "optional" : false,
+    "value" : "GOVERNANCE",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.mode",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setDefaultRetention",
+      "type" : "simple"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Governance",
+      "value" : "GOVERNANCE"
+    }, {
+      "name" : "Compliance (irreversible)",
+      "value" : "COMPLIANCE"
+    } ]
+  }, {
+    "id" : "setDefaultRetentionDays",
+    "label" : "Days",
+    "description" : "How many days every new object version is locked for, 1 to 365. STACKIT caps Object Lock retention at 365 days.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.days",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setDefaultRetention",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "deleteDefaultRetentionBucketName",
+    "label" : "Bucket name",
+    "description" : "Name of an Object Lock bucket.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucketName",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteDefaultRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "version",
+    "label" : "Version",
+    "description" : "Version of the element template",
+    "value" : "1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateVersion",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "id",
+    "label" : "ID",
+    "description" : "ID of the element template",
+    "value" : "de.envite.connectors.stackit.objectstorage.management.v1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateId",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "resultVariable",
+    "label" : "Result variable",
+    "description" : "Name of variable to store the response in. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-variable\" target=\"_blank\">documentation</a>.",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultVariable",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "resultExpression",
+    "label" : "Result expression",
+    "description" : "Expression to map the response into process variables. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-expression\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "errorExpression",
+    "label" : "Error expression",
+    "description" : "Expression to handle errors. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "error",
+    "binding" : {
+      "key" : "errorExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "retryCount",
+    "label" : "Retries",
+    "description" : "Number of retries",
+    "value" : "3",
+    "feel" : "optional",
+    "group" : "retries",
+    "binding" : {
+      "property" : "retries",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "retryBackoff",
+    "label" : "Retry backoff",
+    "description" : "ISO-8601 duration to wait between retries",
+    "value" : "PT30S",
+    "group" : "retries",
+    "binding" : {
+      "key" : "retryBackoff",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "jobTimeout",
+    "label" : "Job timeout",
+    "description" : "ISO-8601 duration after which Zeebe considers this job timed out if not yet completed. Leave empty to use the default timeout",
+    "optional" : true,
+    "group" : "retries",
+    "binding" : {
+      "key" : "jobTimeout",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  } ],
+  "steps" : [ {
+    "name" : "Service account key",
+    "description" : "Signs a short-lived JWT assertion with the service account's private key and exchanges it for an access token. The recommended flow.",
+    "keywords" : [ "service account", "key", "jwt", "assertion", "rsa" ],
+    "presetId" : "type_serviceAccountKey"
+  }, {
+    "name" : "Access token (deprecated)",
+    "description" : "A long-lived service account access token. Deprecated by STACKIT: the underlying role was deprecated on 2025-12-16 and its removal was announced for the end of Q2 2026, which has passed, so such a token may no longer work. Use a service account key.",
+    "keywords" : [ "token", "bearer", "deprecated", "legacy" ],
+    "presetId" : "type_accessToken"
+  } ],
+  "presets" : [ {
+    "id" : "type_serviceAccountKey",
+    "properties" : {
+      "authentication.type" : "serviceAccountKey"
+    }
+  }, {
+    "id" : "type_accessToken",
+    "properties" : {
+      "authentication.type" : "accessToken"
+    }
+  } ],
+  "icon" : {
+    "contents" : "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K"
+  }
+}

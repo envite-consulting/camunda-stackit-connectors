@@ -19,6 +19,7 @@ request and every push to `main` to prove the Dockerfile still works, but never 
 | Connector | Job type | Element template |
 | --- | --- | --- |
 | STACKIT Object Storage | `de.envite:stackit-object-storage:1` | `de.envite.connectors.stackit.objectstorage.v1` |
+| STACKIT Object Storage Management | `de.envite:stackit-object-storage-management:1` | `de.envite.connectors.stackit.objectstorage.management.v1` |
 
 The runtime discovers connectors through their
 `META-INF/services/io.camunda.connector.api.outbound.OutboundConnectorFunction` entries, so this

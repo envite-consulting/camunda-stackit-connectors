@@ -20,9 +20,22 @@
     <element.template.id>de.envite.connectors.stackit.objectstorage.v1</element.template.id>
     <element.template.file>stackit-object-storage-outbound-connector.json</element.template.file>
     <connector.class>de.envite.camunda.stackit.objectstorage.StackitObjectStorageConnectorFunction</connector.class>
+    <management.element.template.id>de.envite.connectors.stackit.objectstorage.management.v1</management.element.template.id>
+    <management.element.template.file>stackit-object-storage-management-outbound-connector.json</management.element.template.file>
+    <management.connector.class>de.envite.camunda.stackit.objectstorage.management.StackitObjectStorageManagementConnectorFunction</management.connector.class>
   </properties>
 
   <dependencies>
+    <!--
+      The management connector authenticates with a STACKIT service account (key flow). The
+      auth module brings no third-party code of its own: it signs with the JDK and talks
+      through java.net.http.
+    -->
+    <dependency>
+      <groupId>de.envite.camunda.stackit</groupId>
+      <artifactId>stackit-connector-auth</artifactId>
+    </dependency>
+
     <!--
       The S3 data plane is spoken with the AWS SDK v2 against an endpoint override. The
       STACKIT Java SDK covers only the management API (buckets, credential groups), which
@@ -68,6 +81,13 @@
       <artifactId>auth</artifactId>
     </dependency>
 
+    <!-- The management connector's unit tests stub the STACKIT management API. -->
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <scope>test</scope>
+    </dependency>
+
     <!-- Integration tests run against Floci, an S3-compatible emulator, in a container. -->
     <dependency>
       <groupId>io.floci</groupId>
@@ -100,6 +120,16 @@
                   <!-- Must equal @ElementTemplate(id = ...) or the file name mapping is ignored. -->
                   <templateId>${element.template.id}</templateId>
                   <templateFileName>${element.template.file}</templateFileName>
+                </file>
+              </files>
+              <generateHybridTemplates>true</generateHybridTemplates>
+            </connector>
+            <connector>
+              <connectorClass>${management.connector.class}</connectorClass>
+              <files>
+                <file>
+                  <templateId>${management.element.template.id}</templateId>
+                  <templateFileName>${management.element.template.file}</templateFileName>
                 </file>
               </files>
               <generateHybridTemplates>true</generateHybridTemplates>

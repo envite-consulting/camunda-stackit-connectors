@@ -14,16 +14,23 @@ Maintained by [envite consulting GmbH](https://www.envite.de).
 
 | Connector | Service | Type | Status |
 | --- | --- | --- | --- |
-| [Object Storage](connectors/object-storage) | [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/) (S3) | Outbound | **Available** — 8 operations |
+| [Object Storage](connectors/object-storage) | [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/) (S3) | Outbound | **Available** — 10 operations, including Object Lock |
+| [Object Storage Management](connectors/object-storage#management-connector) | [STACKIT Object Storage](https://docs.stackit.cloud/products/storage/object-storage/) management API | Outbound | **Available** — 17 operations: buckets, credentials groups, access keys, compliance lock, default retention |
 | [Archiving](connectors/archiving) | [STACKIT Archiving Service](https://docs.stackit.cloud/products/storage/archiving/) | — | Design document — blocked, see below |
 | [Workflows](connectors/workflows) | [STACKIT Workflows](https://docs.stackit.cloud/products/data-and-ai/workflows/) (managed Airflow) | — | Design document — blocked, see below |
 
 The Object Storage connector covers **upload**, **download**, **delete**, **copy**, **list**,
-**get metadata**, and **presigned download / upload URLs**. Uploads of Camunda documents are
-verified end to end: STACKIT checks the received bytes against the SHA-256 the Camunda document
-store recorded, and refuses to store anything else. It reads from and writes to
+**get metadata**, **presigned download / upload URLs**, and **Object Lock** retention and legal
+holds. Every upload is verified: STACKIT checks a SHA-256 of the content before storing it — for
+Camunda documents the one the document store recorded, so what is stored is provably what the
+process received. Documents over 5 GiB go up as a multipart upload, verified part by part. It reads from and writes to
 [Camunda documents](https://docs.camunda.io/docs/components/concepts/document-handling/), so a
 file can flow through a process without ever being pasted into a variable.
+
+The Object Storage Management connector ships in the same jar with its own element template. It
+provisions what the data-plane connector uses: buckets (optionally with Object Lock), credentials
+groups and access keys, the project compliance lock and a bucket's default retention. It
+authenticates with a STACKIT service account rather than an access key.
 
 The Archiving and Workflows directories hold research and design documents rather than code,
 and deliberately have no `pom.xml` — shipping empty artifacts would be worse than shipping
@@ -73,6 +80,10 @@ Templates are read at startup; `Ctrl+R` / `Cmd+R` reloads them.
 
 **Web Modeler / Camunda Hub** — in your project, *Create new* → *Upload files* → select the
 JSON → **Publish**.
+
+The Object Storage jar has two templates: `stackit-object-storage-outbound-connector.json` for
+objects and `stackit-object-storage-management-outbound-connector.json` for buckets, credentials
+and Object Lock settings. Install the ones you use.
 
 Templates are attached to each [GitHub release](https://github.com/envite-consulting/camunda-stackit-connectors/releases)
 and also live in the repository at
@@ -151,7 +162,7 @@ limits.
 core/                  shared across all connectors: regions, endpoints, error mapping
 auth/                  STACKIT service account key flow (for management-API connectors)
 connectors/
-  object-storage/      the Object Storage connector
+  object-storage/      the Object Storage connectors: data plane (S3) and management API
   archiving/           design document
   workflows/           design document
 bundle/                runnable Connector Runtime containing every connector
@@ -160,10 +171,10 @@ examples/              docker-compose setup and example BPMN
 tools/                 element template schema validation, live test runner
 ```
 
-`auth/` has no consumer inside this repository yet, by design: the Object Storage connector
-v1 speaks only the S3 data plane with static access keys, while STACKIT's management APIs
-need the service account key flow. It is built and tested as the foundation for the next
-connectors. The reasoning is in [`AGENTS.md`](AGENTS.md).
+`auth/` implements the service account key flow that STACKIT's management APIs require. Its
+first consumer is the Object Storage Management connector. The S3 data plane signs with access
+keys instead, which is why Object Storage is split into two templates. The reasoning is in
+[`AGENTS.md`](AGENTS.md).
 
 ## Building
 
@@ -203,7 +214,7 @@ costs a fraction of a cent: STACKIT bills Object Storage per started GB-hour, at
 | Region | `eu01` (Germany) or `eu02` (Austria), wherever you create the bucket | yes |
 | Bucket name | a bucket you create for the tests | yes |
 | Access key ID + secret access key | an Object Storage credentials group in the same project | yes |
-| Project ID + service account key JSON | a service account with the `reader` role | only for the key-flow tests of `auth/` |
+| Project ID + service account key JSON | a service account with the `object-storage.admin` role (`reader` suffices for `auth/` alone) | only for the key-flow tests of `auth/` and the management connector's live tests |
 
 ### Setting up a STACKIT project, step by step
 
@@ -231,9 +242,11 @@ These steps follow the [STACKIT documentation](https://docs.stackit.cloud/) as o
    (for example `camunda-it`), open it, and create credentials in it. **Copy the secret access
    key immediately** — STACKIT shows it exactly once.
    ([docs](https://docs.stackit.cloud/products/storage/object-storage/how-tos/create-and-delete-object-storage-credentials/))
-6. **Optional: a service account**, for the key-flow tests of `auth/`. *IAM and Management →
-   Service accounts → Create service account*; then *IAM and Management → Access → Grant
-   access*, give that service account the `reader` role on the project; then open the
+6. **Optional: a service account**, for the key-flow tests of `auth/` and the management
+   connector's live tests. *IAM and Management → Service accounts → Create service account*;
+   then *IAM and Management → Access → Grant access*, give that service account the
+   `object-storage.admin` role on the project (`reader` is enough for `auth/` alone, but the
+   management tests create and delete buckets, credentials groups and access keys); then open the
    service account, *Service account keys → Create service account key → Create new key
    pair*, and download the JSON. Don't skip the role: a service account without one gets valid
    tokens, but every API answers `403`. It contains the private key and cannot be downloaded again.
@@ -251,7 +264,7 @@ stackit object-storage credentials-group create --name camunda-it --region eu01 
 stackit object-storage credentials create --credentials-group-id <GROUP_ID> --region eu01 -o json -y
 # optional, for auth/:
 stackit service-account create --name camunda-it
-stackit project member add <SERVICE_ACCOUNT_EMAIL> --role reader
+stackit project member add <SERVICE_ACCOUNT_EMAIL> --role object-storage.admin
 stackit service-account key create --email <SERVICE_ACCOUNT_EMAIL> -o json -y > .secrets/stackit-service-account-key.json
 ```
 
@@ -272,13 +285,12 @@ The checksum probes print `FINDING` lines and also write them to
 
 ## Roadmap
 
-1. **Object Storage** — control-plane operations (create/delete bucket, manage credentials
-   groups and access keys) using the service account key flow, and Object Lock / retention
-   for audit-proof storage.
-2. **Workflows** — an Airflow REST client, once the authentication story for machine clients
+1. **Workflows** — an Airflow REST client, once the authentication story for machine clients
    against a STACKIT-managed instance is clear.
-3. **Archiving** — blocked until STACKIT publishes the NEAS REST API.
-4. **KMS**, **Dremio**, and further services on request.
+2. **Archiving** — blocked until STACKIT publishes the NEAS REST API. Object Lock on Object
+   Storage, which both Object Storage connectors now cover, is the available substitute; see the
+   design document for where it falls short.
+3. **KMS**, **Dremio**, and further services on request.
 
 Issues and ideas are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

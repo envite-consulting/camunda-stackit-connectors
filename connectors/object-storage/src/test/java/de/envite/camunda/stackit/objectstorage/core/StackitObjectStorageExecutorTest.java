@@ -18,8 +18,12 @@ package de.envite.camunda.stackit.objectstorage.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
@@ -30,12 +34,16 @@ import de.envite.camunda.stackit.objectstorage.model.request.HeadObject;
 import de.envite.camunda.stackit.objectstorage.model.request.ListObjects;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignDownloadUrl;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignUploadUrl;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectLegalHold;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectRetention;
 import de.envite.camunda.stackit.objectstorage.model.request.UploadObject;
 import de.envite.camunda.stackit.objectstorage.model.response.CopyObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.DeleteObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.DownloadObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.HeadObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.ListObjectsResult;
+import de.envite.camunda.stackit.objectstorage.model.response.ObjectLegalHoldResult;
+import de.envite.camunda.stackit.objectstorage.model.response.ObjectRetentionResult;
 import de.envite.camunda.stackit.objectstorage.model.response.ObjectSummary;
 import de.envite.camunda.stackit.objectstorage.model.response.PresignedUrlResult;
 import de.envite.camunda.stackit.objectstorage.model.response.UploadObjectResult;
@@ -65,9 +73,16 @@ import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.http.SdkHttpMethod;
 import software.amazon.awssdk.http.SdkHttpRequest;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm;
 import software.amazon.awssdk.services.s3.model.CommonPrefix;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.CopyObjectResponse;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -79,11 +94,20 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectLockLegalHoldStatus;
+import software.amazon.awssdk.services.s3.model.ObjectLockMode;
+import software.amazon.awssdk.services.s3.model.ObjectLockRetentionMode;
+import software.amazon.awssdk.services.s3.model.PutObjectLegalHoldRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectLegalHoldResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRetentionRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRetentionResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
@@ -98,6 +122,8 @@ class StackitObjectStorageExecutorTest {
 
   private static final String BUCKET = "stackit-invoices";
   private static final Instant LAST_MODIFIED = Instant.parse("2026-01-15T10:30:00Z");
+  private static final java.time.Clock FIXED_CLOCK =
+      java.time.Clock.fixed(Instant.parse("2026-11-16T09:15:30.123456Z"), java.time.ZoneOffset.UTC);
 
   @Mock private S3Client s3Client;
   @Mock private S3Presigner s3Presigner;
@@ -111,6 +137,15 @@ class StackitObjectStorageExecutorTest {
     context = OutboundConnectorContextBuilder.create().variables(Map.of()).build();
   }
 
+  private static String sha256Base64(final String content) {
+    return java.util.Base64.getEncoder()
+        .encodeToString(java.util.HexFormat.of().parseHex(TestDocument.sha256Hex(content)));
+  }
+
+  private static UploadObject upload(final String key, final Document document) {
+    return new UploadObject(BUCKET, key, document, null, null, null, null, null, null, null);
+  }
+
   @Nested
   @DisplayName("uploadObject")
   class Upload {
@@ -122,140 +157,136 @@ class StackitObjectStorageExecutorTest {
       return TestDocument.withKnownSize(fileName, contentType, body);
     }
 
-    @Test
-    @DisplayName("streams the document with its own size and content type")
-    void streamsTheDocument() {
+    private void stubPutObject(final PutObjectResponse response) {
       when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().eTag("\"etag\"").build());
-      final Document document = document("invoice.pdf", "application/pdf", "pdf-bytes");
+          .thenReturn(response);
+    }
+
+    @Test
+    @DisplayName("streams a Camunda document with the document store's SHA-256")
+    void streamsACamundaDocumentWithItsChecksum() {
+      stubPutObject(PutObjectResponse.builder().eTag("\"etag\"").build());
+      final String hash = TestDocument.sha256Hex("pdf-bytes");
 
       final Object result =
           executor.execute(
-              new UploadObject(BUCKET, "2026/01/invoice.pdf", document, null, null, null, null),
+              upload(
+                  "2026/01/invoice.pdf",
+                  TestDocument.fromCamundaStore("f.pdf", "application/pdf", "pdf-bytes", hash)),
               context);
 
       verify(s3Client).putObject(requestCaptor.capture(), bodyCaptor.capture());
-      assertThat(requestCaptor.getValue().bucket()).isEqualTo(BUCKET);
-      assertThat(requestCaptor.getValue().key()).isEqualTo("2026/01/invoice.pdf");
-      assertThat(requestCaptor.getValue().contentType()).isEqualTo("application/pdf");
-      assertThat(requestCaptor.getValue().contentLength()).isEqualTo(9L);
-      assertThat(requestCaptor.getValue().serverSideEncryption()).isNull();
+      final PutObjectRequest request = requestCaptor.getValue();
+      assertThat(request.bucket()).isEqualTo(BUCKET);
+      assertThat(request.key()).isEqualTo("2026/01/invoice.pdf");
+      assertThat(request.contentType()).isEqualTo("application/pdf");
+      assertThat(request.contentLength()).isEqualTo(9L);
+      assertThat(request.checksumSHA256()).isEqualTo(sha256Base64("pdf-bytes"));
+      assertThat(request.serverSideEncryption()).isNull();
+      assertThat(request.objectLockMode()).isNull();
+      assertThat(request.objectLockLegalHoldStatus()).isNull();
       assertThat(bodyCaptor.getValue().optionalContentLength()).contains(9L);
       assertThat(result)
           .isEqualTo(
               new UploadObjectResult(
-                  BUCKET, "2026/01/invoice.pdf", "\"etag\"", null, null, false, null));
-      assertThat(requestCaptor.getValue().checksumSHA256())
-          .as("a document without a Camunda content hash is uploaded unverified")
-          .isNull();
-    }
-
-    @Test
-    @DisplayName("sends the document store's SHA-256 so that STACKIT verifies the received bytes")
-    void sendsTheDocumentStoreChecksum() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().eTag("\"etag\"").build());
-      final String hash = TestDocument.sha256Hex("pdf-bytes");
-      final String base64 =
-          java.util.Base64.getEncoder().encodeToString(java.util.HexFormat.of().parseHex(hash));
-
-      final Object result =
-          executor.execute(
-              new UploadObject(
                   BUCKET,
-                  "k",
-                  TestDocument.fromCamundaStore("f.pdf", "application/pdf", "pdf-bytes", hash),
+                  "2026/01/invoice.pdf",
+                  "\"etag\"",
                   null,
                   null,
+                  sha256Base64("pdf-bytes"),
+                  true,
+                  1,
                   null,
-                  null),
-              context);
-
-      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
-      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(base64);
-      assertThat(result)
-          .isEqualTo(new UploadObjectResult(BUCKET, "k", "\"etag\"", null, null, true, base64));
+                  null,
+                  false));
     }
 
     @Test
     @DisplayName("accepts an upper-case hex hash")
     void acceptsAnUpperCaseHash() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().build());
+      stubPutObject(PutObjectResponse.builder().build());
       final String hash = TestDocument.sha256Hex("abc").toUpperCase(java.util.Locale.ROOT);
 
       executor.execute(
-          new UploadObject(
-              BUCKET,
-              "k",
-              TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", hash),
-              null,
-              null,
-              null,
-              null),
-          context);
+          upload("k", TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", hash)), context);
 
       verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
-      assertThat(requestCaptor.getValue().checksumSHA256()).isNotNull();
+      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(sha256Base64("abc"));
+    }
+
+    @Test
+    @DisplayName("computes the SHA-256 itself for a document that carries none")
+    void computesTheChecksumOfADocumentWithoutOne() {
+      stubPutObject(PutObjectResponse.builder().eTag("\"etag\"").build());
+
+      final UploadObjectResult result =
+          (UploadObjectResult)
+              executor.execute(upload("k", document("f.txt", "text/plain", "abc")), context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), bodyCaptor.capture());
+      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(sha256Base64("abc"));
+      assertThat(requestCaptor.getValue().contentLength()).isEqualTo(3L);
+      assertThat(bodyCaptor.getValue().contentStreamProvider().newStream()).hasContent("abc");
+      assertThat(result.checksumSha256()).isEqualTo(sha256Base64("abc"));
+      assertThat(result.documentChecksumVerified())
+          .as("there was no document store checksum to compare with")
+          .isFalse();
+      assertThat(result.partCount()).isEqualTo(1);
     }
 
     @Test
     @DisplayName("ignores a content hash that is not a SHA-256, rather than trusting it")
     void ignoresAHashThatIsNotASha256() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().build());
+      stubPutObject(PutObjectResponse.builder().build());
 
       // The connector SDK's own in-memory test store uses the content length as its "hash".
-      final Object result =
-          executor.execute(
-              new UploadObject(
-                  BUCKET,
-                  "k",
-                  TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", "3"),
-                  null,
-                  null,
-                  null,
-                  null),
-              context);
+      final UploadObjectResult result =
+          (UploadObjectResult)
+              executor.execute(
+                  upload("k", TestDocument.fromCamundaStore("f.txt", "text/plain", "abc", "3")),
+                  context);
 
       verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
-      assertThat(requestCaptor.getValue().checksumSHA256()).isNull();
-      assertThat(((UploadObjectResult) result).integrityVerified()).isFalse();
+      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(sha256Base64("abc"));
+      assertThat(result.documentChecksumVerified()).isFalse();
     }
 
     @Test
-    @DisplayName("buffers through a content provider when the document reports no size")
-    void bufferssWhenTheSizeIsUnknown() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().build());
+    @DisplayName("reads a document of unknown size and sends it with its length and SHA-256")
+    void readsADocumentOfUnknownSize() {
+      stubPutObject(PutObjectResponse.builder().build());
 
       executor.execute(
-          new UploadObject(
-              BUCKET,
-              "k",
-              TestDocument.withUnknownSize("f.txt", "text/plain", "abc"),
-              null,
-              null,
-              null,
-              null),
-          context);
+          upload("k", TestDocument.withUnknownSize("f.txt", "text/plain", "abc")), context);
 
       verify(s3Client).putObject(requestCaptor.capture(), bodyCaptor.capture());
-      assertThat(requestCaptor.getValue().contentLength()).isNull();
-      assertThat(bodyCaptor.getValue().contentType()).isEqualTo("text/plain");
+      assertThat(requestCaptor.getValue().contentLength()).isEqualTo(3L);
+      assertThat(requestCaptor.getValue().checksumSHA256()).isEqualTo(sha256Base64("abc"));
       assertThat(bodyCaptor.getValue().contentStreamProvider().newStream()).hasContent("abc");
+    }
+
+    @Test
+    @DisplayName("refuses to upload content that differs from the document store's checksum")
+    void refusesContentThatDoesNotMatchTheDocumentStore() {
+      final Document document =
+          TestDocument.fromCamundaStoreWithoutSize(
+              "f.txt", "text/plain", "tampered", TestDocument.sha256Hex("original"));
+
+      assertThatThrownBy(() -> executor.execute(upload("k", document), context))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("Nothing was stored")
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED);
+      verifyNoInteractions(s3Client);
     }
 
     @Test
     @DisplayName("falls back to the document file name when no key is configured")
     void fallsBackToTheDocumentFileName() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().build());
+      stubPutObject(PutObjectResponse.builder().build());
 
-      executor.execute(
-          new UploadObject(
-              BUCKET, "  ", document("report.csv", "text/csv", "a,b"), null, null, null, null),
-          context);
+      executor.execute(upload("  ", document("report.csv", "text/csv", "a,b")), context);
 
       verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
       assertThat(requestCaptor.getValue().key()).isEqualTo("report.csv");
@@ -264,8 +295,7 @@ class StackitObjectStorageExecutorTest {
     @Test
     @DisplayName("overrides the content type when one is configured")
     void overridesTheContentType() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(PutObjectResponse.builder().build());
+      stubPutObject(PutObjectResponse.builder().build());
 
       executor.execute(
           new UploadObject(
@@ -273,6 +303,9 @@ class StackitObjectStorageExecutorTest {
               "k",
               document("f.bin", "application/octet-stream", "x"),
               "image/png",
+              null,
+              null,
+              null,
               null,
               null,
               null),
@@ -285,25 +318,28 @@ class StackitObjectStorageExecutorTest {
     @Test
     @DisplayName("passes metadata, URL-encoded tags and SSE-S3 through")
     void passesMetadataTagsAndEncryption() {
-      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-          .thenReturn(
-              PutObjectResponse.builder()
-                  .eTag("\"e\"")
-                  .versionId("v1")
-                  .serverSideEncryption(ServerSideEncryption.AES256)
-                  .build());
+      stubPutObject(
+          PutObjectResponse.builder()
+              .eTag("\"e\"")
+              .versionId("v1")
+              .serverSideEncryption(ServerSideEncryption.AES256)
+              .build());
 
-      final Object result =
-          executor.execute(
-              new UploadObject(
-                  BUCKET,
-                  "k",
-                  document("f", "text/plain", "x"),
-                  null,
-                  Map.of("orderId", "4711"),
-                  Map.of("env", "prod test"),
-                  true),
-              context);
+      final UploadObjectResult result =
+          (UploadObjectResult)
+              executor.execute(
+                  new UploadObject(
+                      BUCKET,
+                      "k",
+                      document("f", "text/plain", "x"),
+                      null,
+                      Map.of("orderId", "4711"),
+                      Map.of("env", "prod test"),
+                      true,
+                      null,
+                      null,
+                      null),
+                  context);
 
       verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
       assertThat(requestCaptor.getValue().metadata()).containsExactly(Map.entry("orderId", "4711"));
@@ -311,8 +347,95 @@ class StackitObjectStorageExecutorTest {
       assertThat(requestCaptor.getValue().tagging()).isEqualTo("env=prod%20test");
       assertThat(requestCaptor.getValue().serverSideEncryption())
           .isEqualTo(ServerSideEncryption.AES256);
-      assertThat(result)
-          .isEqualTo(new UploadObjectResult(BUCKET, "k", "\"e\"", "v1", "AES256", false, null));
+      assertThat(result.eTag()).isEqualTo("\"e\"");
+      assertThat(result.versionId()).isEqualTo("v1");
+      assertThat(result.serverSideEncryption()).isEqualTo("AES256");
+    }
+
+    @Test
+    @DisplayName("applies Object Lock retention and legal hold with the upload")
+    void appliesObjectLockWithTheUpload() {
+      stubPutObject(PutObjectResponse.builder().versionId("v1").build());
+      executor =
+          new StackitObjectStorageExecutor(
+              s3Client, () -> s3Presigner, UploadLimits.STACKIT, FIXED_CLOCK);
+
+      final UploadObjectResult result =
+          (UploadObjectResult)
+              executor.execute(
+                  new UploadObject(
+                      BUCKET,
+                      "k",
+                      document("f", "text/plain", "x"),
+                      null,
+                      null,
+                      null,
+                      null,
+                      "governance",
+                      "P30D",
+                      true),
+                  context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
+      final PutObjectRequest request = requestCaptor.getValue();
+      final Instant expected = Instant.parse("2026-12-16T09:15:30Z");
+      assertThat(request.objectLockMode()).isEqualTo(ObjectLockMode.GOVERNANCE);
+      assertThat(request.objectLockRetainUntilDate()).isEqualTo(expected);
+      assertThat(request.objectLockLegalHoldStatus()).isEqualTo(ObjectLockLegalHoldStatus.ON);
+      assertThat(request.checksumSHA256())
+          .as("STACKIT refuses an Object Lock upload without a checksum")
+          .isNotNull();
+      assertThat(result.objectLockMode()).isEqualTo("GOVERNANCE");
+      assertThat(result.objectLockRetainUntilDate()).isEqualTo(expected);
+      assertThat(result.objectLockLegalHold()).isTrue();
+    }
+
+    @Test
+    @DisplayName("fails with INVALID_INPUT for a retention mode without a retain-until date")
+    void failsForRetentionWithoutDate() {
+      assertThatThrownBy(() ->
+              executor.execute(
+                  new UploadObject(
+                      BUCKET,
+                      "k",
+                      document("f", "text/plain", "x"),
+                      null,
+                      null,
+                      null,
+                      null,
+                      "COMPLIANCE",
+                      " ",
+                      null),
+                  context))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("no 'Retain until'")
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("ignores the retain-until date when the retention mode is NONE")
+    void ignoresTheDateWithoutRetention() {
+      stubPutObject(PutObjectResponse.builder().build());
+
+      executor.execute(
+          new UploadObject(
+              BUCKET,
+              "k",
+              document("f", "text/plain", "x"),
+              null,
+              null,
+              null,
+              null,
+              "NONE",
+              "not a date",
+              false),
+          context);
+
+      verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
+      assertThat(requestCaptor.getValue().objectLockMode()).isNull();
+      assertThat(requestCaptor.getValue().objectLockRetainUntilDate()).isNull();
     }
 
     @Test
@@ -320,11 +443,359 @@ class StackitObjectStorageExecutorTest {
     void failsWithoutKeyAndFileName() {
       final Document document = TestDocument.withKnownSize(null, "text/plain", "x");
 
-      assertThatThrownBy(() ->
-              executor.execute(
-                  new UploadObject(BUCKET, null, document, null, null, null, null), context))
+      assertThatThrownBy(() -> executor.execute(upload(null, document), context))
           .isInstanceOf(ConnectorException.class)
           .hasMessageContaining("No object key was given")
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+    }
+  }
+
+  @Nested
+  @DisplayName("uploadObject as a multipart upload")
+  class MultipartUpload {
+
+    /** Parts of 4 bytes, and any Camunda document over 8 bytes goes multipart. */
+    private static final UploadLimits SMALL = new UploadLimits(8, 4, 3);
+
+    @Captor private ArgumentCaptor<CreateMultipartUploadRequest> createCaptor;
+    @Captor private ArgumentCaptor<UploadPartRequest> partCaptor;
+    @Captor private ArgumentCaptor<RequestBody> bodyCaptor;
+    @Captor private ArgumentCaptor<CompleteMultipartUploadRequest> completeCaptor;
+
+    @BeforeEach
+    void useSmallParts() {
+      executor = new StackitObjectStorageExecutor(s3Client, () -> s3Presigner, SMALL, FIXED_CLOCK);
+    }
+
+    private void stubMultipart() {
+      when(s3Client.createMultipartUpload(any(CreateMultipartUploadRequest.class)))
+          .thenReturn(CreateMultipartUploadResponse.builder().uploadId("upload-1").build());
+      when(s3Client.uploadPart(any(UploadPartRequest.class), any(RequestBody.class)))
+          .thenAnswer(invocation ->
+              UploadPartResponse.builder()
+                  .eTag(
+                      "\"part-"
+                          + invocation.getArgument(0, UploadPartRequest.class).partNumber()
+                          + "\"")
+                  .build());
+    }
+
+    private String bodyOf(final RequestBody body) throws java.io.IOException {
+      try (var stream = body.contentStreamProvider().newStream()) {
+        return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+      }
+    }
+
+    @Test
+    @DisplayName("declares SHA-256, sends every part with its own SHA-256, and completes in order")
+    void uploadsVerifiedParts() throws Exception {
+      stubMultipart();
+      when(s3Client.completeMultipartUpload(any(CompleteMultipartUploadRequest.class)))
+          .thenReturn(
+              CompleteMultipartUploadResponse.builder()
+                  .eTag("\"multi-3\"")
+                  .versionId("v9")
+                  .build());
+      final String content = "abcdefghij";
+
+      final UploadObjectResult result =
+          (UploadObjectResult)
+              executor.execute(
+                  new UploadObject(
+                      BUCKET,
+                      "big.bin",
+                      TestDocument.fromCamundaStore(
+                          "f",
+                          "application/octet-stream",
+                          content,
+                          TestDocument.sha256Hex(content)),
+                      null,
+                      Map.of("orderId", "4711"),
+                      null,
+                      true,
+                      "GOVERNANCE",
+                      "2027-01-31",
+                      true),
+                  context);
+
+      verify(s3Client).createMultipartUpload(createCaptor.capture());
+      final CreateMultipartUploadRequest create = createCaptor.getValue();
+      assertThat(create.checksumAlgorithm()).isEqualTo(ChecksumAlgorithm.SHA256);
+      assertThat(create.metadata()).containsEntry("orderId", "4711");
+      assertThat(create.serverSideEncryption()).isEqualTo(ServerSideEncryption.AES256);
+      assertThat(create.objectLockMode()).isEqualTo(ObjectLockMode.GOVERNANCE);
+      assertThat(create.objectLockRetainUntilDate())
+          .isEqualTo(Instant.parse("2027-01-31T00:00:00Z"));
+      assertThat(create.objectLockLegalHoldStatus()).isEqualTo(ObjectLockLegalHoldStatus.ON);
+
+      verify(s3Client, times(3)).uploadPart(partCaptor.capture(), bodyCaptor.capture());
+      final java.util.List<String> bodies = new java.util.ArrayList<>();
+      for (final RequestBody body : bodyCaptor.getAllValues()) {
+        bodies.add(bodyOf(body));
+      }
+      assertThat(bodies).containsExactly("abcd", "efgh", "ij");
+      assertThat(partCaptor.getAllValues())
+          .extracting(UploadPartRequest::partNumber, UploadPartRequest::checksumSHA256)
+          .containsExactly(
+              tuple(1, sha256Base64("abcd")),
+              tuple(2, sha256Base64("efgh")),
+              tuple(3, sha256Base64("ij")));
+
+      verify(s3Client).completeMultipartUpload(completeCaptor.capture());
+      assertThat(completeCaptor.getValue().uploadId()).isEqualTo("upload-1");
+      assertThat(completeCaptor.getValue().multipartUpload().parts())
+          .extracting(CompletedPart::partNumber, CompletedPart::eTag, CompletedPart::checksumSHA256)
+          .containsExactly(
+              tuple(1, "\"part-1\"", sha256Base64("abcd")),
+              tuple(2, "\"part-2\"", sha256Base64("efgh")),
+              tuple(3, "\"part-3\"", sha256Base64("ij")));
+
+      assertThat(result.partCount()).isEqualTo(3);
+      assertThat(result.checksumSha256()).isEqualTo(sha256Base64(content));
+      assertThat(result.documentChecksumVerified()).isTrue();
+      assertThat(result.versionId()).isEqualTo("v9");
+      verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+      verify(s3Client, never()).abortMultipartUpload(any(AbortMultipartUploadRequest.class));
+    }
+
+    @Test
+    @DisplayName("aborts instead of completing when the content does not match the document store")
+    void abortsOnADocumentStoreMismatch() {
+      stubMultipart();
+      final Document document =
+          TestDocument.fromCamundaStore(
+              "f", "text/plain", "abcdefghij", TestDocument.sha256Hex("something else"));
+
+      assertThatThrownBy(() -> executor.execute(upload("k", document), context))
+          .isInstanceOf(ConnectorException.class)
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED);
+      verify(s3Client).abortMultipartUpload(any(AbortMultipartUploadRequest.class));
+      verify(s3Client, never()).completeMultipartUpload(any(CompleteMultipartUploadRequest.class));
+    }
+
+    @Test
+    @DisplayName("aborts the upload when a part is rejected, and reports the rejection")
+    void abortsWhenAPartFails() {
+      when(s3Client.createMultipartUpload(any(CreateMultipartUploadRequest.class)))
+          .thenReturn(CreateMultipartUploadResponse.builder().uploadId("upload-1").build());
+      when(s3Client.uploadPart(any(UploadPartRequest.class), any(RequestBody.class)))
+          .thenThrow(
+              S3Exception.builder()
+                  .statusCode(400)
+                  .awsErrorDetails(
+                      software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                          .errorCode("BadDigest")
+                          .errorMessage("The sha256 you specified did not match")
+                          .build())
+                  .build());
+
+      assertThatThrownBy(() ->
+              executor.execute(
+                  upload("k", TestDocument.withKnownSize("f", "text/plain", "abcdefghij")),
+                  context))
+          .isInstanceOf(ConnectorException.class)
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED);
+      verify(s3Client).abortMultipartUpload(any(AbortMultipartUploadRequest.class));
+    }
+
+    @Test
+    @DisplayName("still reports the original failure when the abort fails too")
+    void reportsTheOriginalFailureWhenAbortFails() {
+      when(s3Client.createMultipartUpload(any(CreateMultipartUploadRequest.class)))
+          .thenReturn(CreateMultipartUploadResponse.builder().uploadId("upload-1").build());
+      when(s3Client.uploadPart(any(UploadPartRequest.class), any(RequestBody.class)))
+          .thenThrow(S3Exception.builder().statusCode(403).build());
+      when(s3Client.abortMultipartUpload(any(AbortMultipartUploadRequest.class)))
+          .thenThrow(S3Exception.builder().statusCode(500).build());
+
+      assertThatThrownBy(() ->
+              executor.execute(
+                  upload("k", TestDocument.withKnownSize("f", "text/plain", "abcdefghij")),
+                  context))
+          .isInstanceOf(ConnectorException.class)
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.ACCESS_DENIED);
+    }
+
+    @Test
+    @DisplayName("refuses a document of unknown size that needs more parts than allowed")
+    void refusesAnUnknownSizeDocumentThatIsTooLarge() {
+      stubMultipart();
+
+      assertThatThrownBy(() ->
+              executor.execute(
+                  upload("k", TestDocument.withUnknownSize("f", "text/plain", "abcdefghijklmn")),
+                  context))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("reports no size")
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      verify(s3Client, times(3)).uploadPart(any(UploadPartRequest.class), any(RequestBody.class));
+      verify(s3Client).abortMultipartUpload(any(AbortMultipartUploadRequest.class));
+    }
+
+    @Test
+    @DisplayName("streams a Camunda document up to the single-request limit instead")
+    void streamsUpToTheSingleRequestLimit() {
+      when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+          .thenReturn(PutObjectResponse.builder().build());
+
+      executor.execute(
+          upload(
+              "k",
+              TestDocument.fromCamundaStore(
+                  "f", "text/plain", "abcdefgh", TestDocument.sha256Hex("abcdefgh"))),
+          context);
+
+      verify(s3Client).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+      verify(s3Client, never()).createMultipartUpload(any(CreateMultipartUploadRequest.class));
+    }
+  }
+
+  @Nested
+  @DisplayName("setObjectRetention")
+  class Retention {
+
+    @Captor private ArgumentCaptor<PutObjectRetentionRequest> requestCaptor;
+
+    @BeforeEach
+    void useFixedClock() {
+      executor =
+          new StackitObjectStorageExecutor(
+              s3Client, () -> s3Presigner, UploadLimits.STACKIT, FIXED_CLOCK);
+    }
+
+    @Test
+    @DisplayName("sends mode, a whole-second retain-until, version, bypass and a SHA-256 checksum")
+    void setsTheRetention() {
+      when(s3Client.putObjectRetention(any(PutObjectRetentionRequest.class)))
+          .thenReturn(PutObjectRetentionResponse.builder().build());
+
+      final Object result =
+          executor.execute(
+              new SetObjectRetention(BUCKET, "a.pdf", " v1 ", "compliance", "PT36H", true),
+              context);
+
+      verify(s3Client).putObjectRetention(requestCaptor.capture());
+      final PutObjectRetentionRequest request = requestCaptor.getValue();
+      final Instant expected = Instant.parse("2026-11-17T21:15:30Z");
+      assertThat(request.versionId()).isEqualTo("v1");
+      assertThat(request.retention().mode()).isEqualTo(ObjectLockRetentionMode.COMPLIANCE);
+      assertThat(request.retention().retainUntilDate()).isEqualTo(expected);
+      assertThat(request.bypassGovernanceRetention()).isTrue();
+      assertThat(request.checksumAlgorithm()).isEqualTo(ChecksumAlgorithm.SHA256);
+      assertThat(result)
+          .isEqualTo(new ObjectRetentionResult(BUCKET, "a.pdf", "v1", "COMPLIANCE", expected));
+    }
+
+    @Test
+    @DisplayName("refuses NONE, an unknown mode and a date in the past without calling STACKIT")
+    void refusesUnusableInputs() {
+      for (final SetObjectRetention operation :
+          java.util.List.of(
+              new SetObjectRetention(BUCKET, "k", null, "NONE", "P1D", null),
+              new SetObjectRetention(BUCKET, "k", null, "FOREVER", "P1D", null),
+              new SetObjectRetention(BUCKET, "k", null, "GOVERNANCE", "2020-01-01", null),
+              new SetObjectRetention(BUCKET, "k", null, "GOVERNANCE", "next tuesday", null))) {
+        assertThatThrownBy(() -> executor.execute(operation, context))
+            .isInstanceOf(ConnectorException.class)
+            .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+            .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      }
+      verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("explains Object Lock when STACKIT rejects the request")
+    void explainsObjectLockOnRejection() {
+      when(s3Client.putObjectRetention(any(PutObjectRetentionRequest.class)))
+          .thenThrow(
+              S3Exception.builder()
+                  .statusCode(400)
+                  .awsErrorDetails(
+                      software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                          .errorCode("InvalidRequest")
+                          .errorMessage("Bucket is missing Object Lock Configuration")
+                          .build())
+                  .build());
+
+      assertThatThrownBy(() ->
+              executor.execute(
+                  new SetObjectRetention(BUCKET, "k", null, "GOVERNANCE", "P1D", null), context))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("Bucket is missing Object Lock Configuration")
+          .hasMessageContaining("created with Object Lock enabled");
+    }
+  }
+
+  @Nested
+  @DisplayName("setObjectLegalHold")
+  class LegalHold {
+
+    @Captor private ArgumentCaptor<PutObjectLegalHoldRequest> requestCaptor;
+
+    @Test
+    @DisplayName("places and lifts the hold, with a SHA-256 checksum")
+    void placesAndLiftsTheHold() {
+      when(s3Client.putObjectLegalHold(any(PutObjectLegalHoldRequest.class)))
+          .thenReturn(PutObjectLegalHoldResponse.builder().build());
+
+      final Object placed =
+          executor.execute(new SetObjectLegalHold(BUCKET, "k", "v1", true), context);
+      final Object lifted =
+          executor.execute(new SetObjectLegalHold(BUCKET, "k", null, false), context);
+
+      verify(s3Client, times(2)).putObjectLegalHold(requestCaptor.capture());
+      assertThat(requestCaptor.getAllValues())
+          .extracting(request -> request.legalHold().status(), PutObjectLegalHoldRequest::versionId)
+          .containsExactly(
+              tuple(ObjectLockLegalHoldStatus.ON, "v1"),
+              tuple(ObjectLockLegalHoldStatus.OFF, null));
+      assertThat(requestCaptor.getAllValues())
+          .extracting(PutObjectLegalHoldRequest::checksumAlgorithm)
+          .containsOnly(ChecksumAlgorithm.SHA256);
+      assertThat(placed).isEqualTo(new ObjectLegalHoldResult(BUCKET, "k", "v1", true));
+      assertThat(lifted).isEqualTo(new ObjectLegalHoldResult(BUCKET, "k", null, false));
+    }
+
+    @Test
+    @DisplayName("refuses a missing hold flag rather than reading it as 'lift'")
+    void refusesAMissingFlag() {
+      assertThatThrownBy(
+              () -> executor.execute(new SetObjectLegalHold(BUCKET, "k", null, null), context))
+          .isInstanceOf(ConnectorException.class)
+          .extracting(failure -> ((ConnectorException) failure).getErrorCode())
+          .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      verifyNoInteractions(s3Client);
+    }
+  }
+
+  @Nested
+  @DisplayName("upload part sizes")
+  class PartSizes {
+
+    @Test
+    @DisplayName("are 16 MiB up to 10,000 parts and grow in whole MiB beyond")
+    void growWithTheDocument() {
+      final var limits = UploadLimits.STACKIT;
+      final long mib = 1024L * 1024L;
+
+      assertThat(limits.partSizeFor(null)).isEqualTo(16 * mib);
+      assertThat(limits.partSizeFor(1L)).isEqualTo(16 * mib);
+      assertThat(limits.partSizeFor(10_000L * 16 * mib)).isEqualTo(16 * mib);
+      assertThat(limits.partSizeFor(10_000L * 16 * mib + 1)).isEqualTo(17 * mib);
+      // 5 TiB, the largest object: 10,000 parts of 525 MiB hold it.
+      assertThat(limits.partSizeFor(5L * 1024 * 1024 * mib)).isEqualTo(525 * mib);
+    }
+
+    @Test
+    @DisplayName("refuse a document larger than STACKIT can store")
+    void refuseAnOversizedDocument() {
+      assertThatThrownBy(() -> UploadLimits.STACKIT.partSizeFor(60L * 1024 * 1024 * 1024 * 1024))
+          .isInstanceOf(ConnectorException.class)
           .extracting(failure -> ((ConnectorException) failure).getErrorCode())
           .isEqualTo(StackitErrorCodes.INVALID_INPUT);
     }
@@ -442,13 +913,38 @@ class StackitObjectStorageExecutorTest {
       when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
           .thenReturn(DeleteObjectResponse.builder().deleteMarker(true).versionId("v9").build());
 
-      final Object result = executor.execute(new DeleteObject(BUCKET, "a/b.txt", "v1"), context);
+      final Object result =
+          executor.execute(new DeleteObject(BUCKET, "a/b.txt", "v1", null), context);
 
       verify(s3Client).deleteObject(requestCaptor.capture());
       assertThat(requestCaptor.getValue().bucket()).isEqualTo(BUCKET);
       assertThat(requestCaptor.getValue().key()).isEqualTo("a/b.txt");
       assertThat(requestCaptor.getValue().versionId()).isEqualTo("v1");
       assertThat(result).isEqualTo(new DeleteObjectResult(BUCKET, "a/b.txt", "v9", true));
+      assertThat(requestCaptor.getValue().bypassGovernanceRetention()).isNull();
+    }
+
+    @Test
+    @DisplayName("bypasses governance retention when asked to")
+    void bypassesGovernanceRetention() {
+      when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
+          .thenReturn(DeleteObjectResponse.builder().build());
+
+      executor.execute(new DeleteObject(BUCKET, "k", "v1", true), context);
+
+      verify(s3Client).deleteObject(requestCaptor.capture());
+      assertThat(requestCaptor.getValue().bypassGovernanceRetention()).isTrue();
+    }
+
+    @Test
+    @DisplayName("names Object Lock as a possible cause when deleting a version is denied")
+    void explainsADeniedVersionDelete() {
+      when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
+          .thenThrow(S3Exception.builder().statusCode(403).build());
+
+      assertThatThrownBy(() -> executor.execute(new DeleteObject(BUCKET, "k", "v1", null), context))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("legal hold or COMPLIANCE retention");
     }
   }
 
@@ -609,6 +1105,9 @@ class StackitObjectStorageExecutorTest {
                   .versionId("v1")
                   .metadata(Map.of("orderId", "4711"))
                   .storageClass("STANDARD")
+                  .objectLockMode("GOVERNANCE")
+                  .objectLockRetainUntilDate(LAST_MODIFIED.plusSeconds(86_400))
+                  .objectLockLegalHoldStatus("ON")
                   .build());
 
       final Object result = executor.execute(new HeadObject(BUCKET, "a/b.pdf", "v1"), context);
@@ -627,7 +1126,10 @@ class StackitObjectStorageExecutorTest {
                   "\"e\"",
                   LAST_MODIFIED,
                   Map.of("orderId", "4711"),
-                  "STANDARD"));
+                  "STANDARD",
+                  "GOVERNANCE",
+                  LAST_MODIFIED.plusSeconds(86_400),
+                  true));
     }
 
     @Test
@@ -804,7 +1306,8 @@ class StackitObjectStorageExecutorTest {
     @Test
     @DisplayName("rejects a bucket name that survived modelling as a FEEL expression")
     void rejectsAnUnevaluatedExpression() {
-      assertThatThrownBy(() -> executor.execute(new DeleteObject("=myBucket", "k", null), context))
+      assertThatThrownBy(
+              () -> executor.execute(new DeleteObject("=myBucket", "k", null, null), context))
           .isInstanceOf(ConnectorException.class)
           .hasMessageContaining("is not a valid STACKIT bucket name")
           .extracting(failure -> ((ConnectorException) failure).getErrorCode())
@@ -814,9 +1317,10 @@ class StackitObjectStorageExecutorTest {
     @Test
     @DisplayName("rejects upper-case and too-short bucket names with a reason")
     void rejectsInvalidNames() {
-      assertThatThrownBy(() -> executor.execute(new DeleteObject("MyBucket", "k", null), context))
+      assertThatThrownBy(
+              () -> executor.execute(new DeleteObject("MyBucket", "k", null, null), context))
           .hasMessageContaining("contains upper-case characters");
-      assertThatThrownBy(() -> executor.execute(new DeleteObject("ab", "k", null), context))
+      assertThatThrownBy(() -> executor.execute(new DeleteObject("ab", "k", null, null), context))
           .hasMessageContaining("2 characters long");
     }
 

@@ -18,6 +18,7 @@ package de.envite.camunda.stackit.objectstorage.model.request;
 
 import de.envite.camunda.stackit.core.template.TemplateGroups;
 import io.camunda.connector.generator.java.annotation.TemplateProperty;
+import io.camunda.connector.generator.java.annotation.TemplateProperty.DefaultValueType;
 import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyBinding;
 import io.camunda.connector.generator.java.annotation.TemplateSubType;
 import jakarta.validation.constraints.NotBlank;
@@ -33,6 +34,7 @@ import jakarta.validation.constraints.Pattern;
  * @param bucket the bucket to delete from; required
  * @param key the key of the object to delete; required
  * @param versionId a specific object version to delete permanently; optional
+ * @param bypassGovernanceRetention deletes a version under {@code GOVERNANCE} retention; optional
  */
 @TemplateSubType(
     id = DeleteObject.ID,
@@ -68,7 +70,20 @@ public record DeleteObject(
             description =
                 "Permanently deletes one specific version instead of writing a delete marker."
                     + " Leave empty for the usual delete.")
-        String versionId)
+        String versionId,
+    @TemplateProperty(
+            id = "deleteObjectBypassGovernanceRetention",
+            binding = @PropertyBinding(name = "operation.bypassGovernanceRetention"),
+            label = "Bypass governance retention",
+            group = TemplateGroups.OPERATION,
+            optional = true,
+            defaultValue = "false",
+            defaultValueType = DefaultValueType.Boolean,
+            description =
+                "Permanently deletes a version that is under GOVERNANCE Object Lock retention."
+                    + " Needs a version ID. Has no effect on COMPLIANCE retention or a legal hold,"
+                    + " which block deletion regardless.")
+        Boolean bypassGovernanceRetention)
     implements ObjectStorageOperation {
 
   /** The {@code operationType} discriminator value of this operation. */

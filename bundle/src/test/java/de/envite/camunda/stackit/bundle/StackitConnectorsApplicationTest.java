@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.camunda.connector.runtime.core.config.OutboundConnectorConfiguration;
 import io.camunda.connector.runtime.core.outbound.OutboundConnectorFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
@@ -74,6 +76,10 @@ class StackitConnectorsApplicationTest {
    */
   private static final String OBJECT_STORAGE_TYPE = "de.envite:stackit-object-storage:1";
 
+  /** The job type of the Object Storage management connector, shipped in the same jar. */
+  private static final String OBJECT_STORAGE_MANAGEMENT_TYPE =
+      "de.envite:stackit-object-storage-management:1";
+
   /** Connector implementations must come from this repository, not from a coincidental namesake. */
   private static final String STACKIT_PACKAGE_PREFIX = "de.envite.camunda.stackit.";
 
@@ -95,12 +101,13 @@ class StackitConnectorsApplicationTest {
                 + " module is missing from bundle/pom.xml, or its META-INF/services entry or"
                 + " @OutboundConnector annotation is missing")
         .extracting(OutboundConnectorConfiguration::type)
-        .contains(OBJECT_STORAGE_TYPE);
+        .contains(OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE);
   }
 
-  @Test
-  void instantiatesTheDiscoveredConnectorFromThisRepository() {
-    var function = outboundConnectorFactory.getInstance(OBJECT_STORAGE_TYPE);
+  @ParameterizedTest
+  @ValueSource(strings = {OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE})
+  void instantiatesTheDiscoveredConnectorFromThisRepository(final String type) {
+    var function = outboundConnectorFactory.getInstance(type);
 
     assertThat(function)
         .as("the registered function must be instantiable, not merely declared")

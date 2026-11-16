@@ -275,6 +275,49 @@ class StackitS3ErrorMapperTest {
   }
 
   @Nested
+  @DisplayName("Message details")
+  class MessageDetails {
+
+    @Test
+    @DisplayName("quote STACKIT's own error message, which is usually the most specific clue")
+    void quoteTheServiceMessage() {
+      assertThat(StackitS3ErrorMapper.map(s3Exception(400, "InvalidRequest"), ACTION))
+          .hasMessageContaining("message \"something went wrong\"");
+    }
+
+    @Test
+    @DisplayName("leave the service message out of authentication failures")
+    void omitTheMessageOfAuthenticationFailures() {
+      assertThat(StackitS3ErrorMapper.map(s3Exception(403, "SignatureDoesNotMatch"), ACTION))
+          .hasMessageNotContaining("something went wrong");
+    }
+
+    @Test
+    @DisplayName("append an operation hint to INVALID_INPUT and ACCESS_DENIED only")
+    void appendTheHintWhereItHelps() {
+      final String hint = "Object Lock needs a bucket created with Object Lock.";
+
+      final RuntimeException invalid =
+          StackitS3ErrorMapper.map(s3Exception(400, "InvalidRequest"), ACTION, hint);
+      final RuntimeException denied =
+          StackitS3ErrorMapper.map(s3Exception(403, "AccessDenied"), ACTION, hint);
+      final RuntimeException missing =
+          StackitS3ErrorMapper.map(s3Exception(404, "NoSuchKey"), ACTION, hint);
+      final RuntimeException transientFailure =
+          StackitS3ErrorMapper.map(s3Exception(503, "SlowDown"), ACTION, hint);
+
+      assertThat(invalid).hasMessageEndingWith(hint);
+      assertThat(errorCodeOf(invalid)).isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThat(denied).hasMessageEndingWith(hint);
+      assertThat(errorCodeOf(denied)).isEqualTo(StackitErrorCodes.ACCESS_DENIED);
+      assertThat(missing).hasMessageNotContaining(hint);
+      assertThat(transientFailure)
+          .isInstanceOf(ConnectorRetryException.class)
+          .hasMessageNotContaining(hint);
+    }
+  }
+
+  @Nested
   @DisplayName("isMissingObject")
   class MissingObject {
 
