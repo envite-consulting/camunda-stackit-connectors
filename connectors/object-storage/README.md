@@ -26,6 +26,7 @@ account key; the same jar ships a second connector with its own element template
 - [Error codes](#error-codes)
 - [Configuration](#configuration)
 - [Known limitations](#known-limitations)
+- [Management connector](#management-connector)
 - [Element template](#element-template)
 - [Build and test](#build-and-test)
 
@@ -617,7 +618,8 @@ Details and sources:
   500 TB tenant quota (raisable via Support).
 - **Bucket names are globally unique.** STACKIT's own documentation contradicts itself here — the
   concepts page says "unique within a region", the limits page says "unique within the whole
-  system". Treat them as globally unique when you create buckets.
+  system". Treat them as globally unique when you create buckets. The management connector's
+  *Create bucket* reports a name that is already taken as `ALREADY_EXISTS`.
 - **Rate limits** of 2500 requests/s and 500 concurrent requests per project.
 - **Object Lock retention is capped at 365 days** by STACKIT, and `COMPLIANCE` retention cannot be
   undone by anyone. See [Object Lock](#object-lock).
@@ -628,6 +630,117 @@ Details and sources:
 - **No S3 event notifications**, so no inbound connector is possible: STACKIT supports reading a
   notification configuration but not writing one.
 
+## Management connector
+
+The same jar contains a second connector, **STACKIT Object Storage Management**. It has its own
+element template and its own job type, `de.envite:stackit-object-storage-management:1`. It talks to
+the STACKIT Object Storage **management API** (`https://object-storage.api.stackit.cloud`, v2)
+rather than to the S3 data plane. Use it to provision from within a process what the data-plane
+connector needs: a bucket per customer, a credentials group and access key per tenant, or Object
+Lock for an archive.
+
+**Why a second template rather than more operations.** The two APIs take different credentials.
+The S3 data plane signs with an access key of a credentials group; the management API takes a
+STACKIT **service account**. One template with both would show two unrelated sets of credentials,
+and the modeller would have to guess which one an operation uses.
+
+### Authentication
+
+Authentication uses a STACKIT service account key.
+1. Paste the key JSON downloaded from the STACKIT Portal into a Camunda secret.
+2. Reference that secret in the template, for example `{{secrets.STACKIT_SERVICE_ACCOUNT_KEY}}`.
+
+The connector signs a short-lived JWT with the key and exchanges it for an access token. It caches
+that token across jobs until shortly before it expires. The connector also accepts STACKIT's
+long-lived access token, but STACKIT has deprecated it and announced its removal.
+
+**Required role.** The service account needs the project role **`object-storage.admin`**. A new
+service account has no role at all, and `reader` allows only the read operations. Grant the role in
+the STACKIT Portal under *IAM and Management > Access*, or with the CLI:
+
+```bash
+stackit project member add <service-account-email> --project-id <project-id> --role object-storage.admin
+```
+
+The service account email is the `credentials.iss` value in the key JSON. If a permission is
+missing, the task fails with `ACCESS_DENIED`. The message names the missing permission (for example
+`object-storage.bucket.create`) and this role.
+
+### Configuration
+
+| Input | Notes |
+| --- | --- |
+| Project ID | The UUID of the STACKIT project. |
+| Region | `eu01` or `eu02`. Buckets and credentials groups exist per region. |
+| Custom management endpoint | Optional. Must be an `https` URL on a `stackit.cloud` host. The connector sends the service account's bearer token there, and that token works for every API the service account may use. Any other URL fails with `INVALID_INPUT`. |
+
+### Operations
+
+| Operation | STACKIT API | Notes |
+| --- | --- | --- |
+| Get service status | `GetServiceStatus` | Whether Object Storage is enabled for the project in the region. `NOT_FOUND` if it is not. |
+| List buckets | `ListBuckets` | Name, region, `objectLockEnabled` and both URL styles of every bucket. |
+| Get bucket | `GetBucket` | `NOT_FOUND` if the bucket does not exist in this project and region. |
+| Create bucket | `CreateBucket` | Bucket names are **global across all STACKIT customers**; a name that is taken fails with `ALREADY_EXISTS`. **Object Lock** can be enabled only here, at creation. It can never be disabled, and it requires the project compliance lock. |
+| Delete bucket | `DeleteBucket` | Only empty buckets can be deleted. |
+| List credentials groups | `ListCredentialsGroups` | Includes each group's URN, which bucket policies name as the principal. |
+| Create credentials group | `CreateCredentialsGroup` | The display name must be 1 to 32 characters. |
+| Delete credentials group | `DeleteCredentialsGroup` | Also deletes the group's access keys. |
+| List access keys | `ListAccessKeys` | Key ID, obfuscated display name and expiry; never a secret. Leave the credentials group ID empty for the default group. |
+| Create access key | `CreateAccessKey` | Returns the **secret access key**; read the caution below. *Expires* takes an ISO-8601 date-time with offset (`2027-01-31T00:00:00Z`) or a duration from now (`P90D`). Leave it empty for a key that never expires. |
+| Delete access key | `DeleteAccessKey` | Takes the `keyId` returned by *Create access key* or *List access keys*, not the access key ID used for signing. |
+| Get compliance lock | `GetComplianceLock` | Reports `enabled: false`, instead of failing, when the project has no compliance lock. |
+| Create compliance lock | `CreateComplianceLock` | Required at project level before you can create Object Lock buckets or use `COMPLIANCE` retention. |
+| Delete compliance lock | `DeleteComplianceLock` | Fails with `CONFLICT` while any Object Lock bucket exists in the project. |
+| Get default retention | `GetDefaultRetention` | Mode and number of days of an Object Lock bucket's default retention. |
+| Set default retention | `SetDefaultRetention` | `GOVERNANCE` or `COMPLIANCE`, 1 to 365 days (STACKIT's maximum). Applies to every object version written afterwards. |
+| Delete default retention | `DeleteDefaultRetention` | Object versions that are already locked stay locked. |
+
+> [!WARNING]
+> **`COMPLIANCE` retention is irreversible.** Until it expires, nobody can shorten or remove it, or
+> delete an object version it protects. Not you, not STACKIT Support.
+>
+> The project compliance lock is similarly hard to undo: while any Object Lock bucket exists, it
+> cannot be removed.
+>
+> Use `GOVERNANCE` unless a regulation demands `COMPLIANCE`. STACKIT caps retention at 365 days;
+> see §7.2 of the
+> [compatibility notes](../../docs/stackit-object-storage-compatibility.md#72-365-days-is-not-610-years).
+
+> [!CAUTION]
+> **The secret access key ends up in a process variable.** *Create access key* returns
+> `secretAccessKey`, and STACKIT shows it exactly once. The variable it is written to is stored
+> with the process instance, **visible to everyone who can open the instance in Operate**, and kept
+> in the history after the instance completes.
+>
+> Do not map the whole result into a long-lived variable. Instead:
+> 1. Use a **result expression** that keeps only what the next step needs.
+> 2. Hand the secret straight to where it belongs, for example a task that writes it into your
+>    secret store.
+> 3. Clear the variable afterwards.
+>
+> ```feel
+> = { newKeyId: response.keyId, newAccessKey: response.accessKey, newSecret: response.secretAccessKey }
+> ```
+>
+> The connector itself never logs the secret: the result's `toString()` redacts it.
+
+### Management error codes
+
+The management connector uses the same codes as the data-plane connector (see
+[Error codes](#error-codes)), plus `CONFLICT`:
+
+| HTTP | Code | Retried |
+| --- | --- | --- |
+| 400, 422 | `INVALID_INPUT`, with STACKIT's validation detail | no |
+| 401 | `AUTHENTICATION_FAILED`: the key was deleted or deactivated | no |
+| 403 | `ACCESS_DENIED`: the message names the missing permission and the role `object-storage.admin` | no |
+| 404 | `NOT_FOUND`: the resource does not exist, or Object Storage is not enabled for the project in that region | no |
+| 409 | `ALREADY_EXISTS` for the create operations, `CONFLICT` for all others (for example deleting the compliance lock while Object Lock buckets exist) | no |
+| 429 | `RATE_LIMITED`, honouring `Retry-After` | **yes** |
+| 5xx except 501 | `SERVICE_UNAVAILABLE` | **yes** |
+| network failure | `CONNECTION_ERROR` | **yes** |
+
 ## Element template
 
 The element template is generated from the connector's annotations — do not hand-edit it.
@@ -635,6 +748,9 @@ The element template is generated from the connector's annotations — do not ha
 - [`element-templates/stackit-object-storage-outbound-connector.json`](element-templates/stackit-object-storage-outbound-connector.json)
 - [`element-templates/hybrid/stackit-object-storage-outbound-connector-hybrid.json`](element-templates/hybrid/stackit-object-storage-outbound-connector-hybrid.json)
   — for a hybrid setup, where a self-managed connector runtime serves a SaaS cluster
+- [`element-templates/stackit-object-storage-management-outbound-connector.json`](element-templates/stackit-object-storage-management-outbound-connector.json)
+  and its [hybrid variant](element-templates/hybrid/stackit-object-storage-management-outbound-connector-hybrid.json)
+  — the [Management connector](#management-connector)
 
 Install it by copying the JSON into the `.camunda/element-templates/` directory of a Desktop Modeler
 project, or by uploading it to a Web Modeler project.
@@ -673,7 +789,7 @@ normal build. CI checks instead of applying:
 
 ### Live tests against real STACKIT
 
-Opt-in, and never run in CI. Two test classes in
+Opt-in, and never run in CI. Three test classes in
 [`src/test/java/.../objectstorage/live/`](src/test/java/de/envite/camunda/stackit/objectstorage/live/)
 talk to a real STACKIT bucket:
 
@@ -685,8 +801,18 @@ talk to a real STACKIT bucket:
   and writes `FINDING` lines to `target/stackit-live-findings.txt`. The `eu01` results of
   2026-11-10 are in §2.7 of the compatibility notes; re-run it after AWS SDK upgrades and in
   `eu02`.
+- `ObjectStorageManagementLiveIT` drives the management connector:
+  - it creates and deletes a bucket;
+  - it creates and deletes a credentials group and an access key, and proves that the new key works
+    against S3;
+  - if the project allows an Object Lock bucket, it creates an empty one and sets a one-day
+    `GOVERNANCE` default retention on it.
 
-Both are tagged `@Tag("live")`, excluded from every normal build, and run only under the
+  It never touches the compliance lock and never uses `COMPLIANCE`. It needs
+  `STACKIT_IT_PROJECT_ID`, `STACKIT_IT_SERVICE_ACCOUNT_KEY_FILE` and the role
+  `object-storage.admin`; without the two variables it is skipped.
+
+All three are tagged `@Tag("live")`, excluded from every normal build, and run only under the
 `stackit-live` Maven profile, which runs them instead of the container-backed integration tests.
 From the repository root:
 

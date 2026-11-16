@@ -16,6 +16,12 @@ Object Lock — and is explicit about where that falls short of the Archiving Se
 before starting work on an archiving connector**; the API-situation section exists so nobody
 repeats the search.
 
+> **Update 2026-11-16: the §4 path is implemented.** The [Object Storage connector](../object-storage/README.md#object-lock)
+> uploads with Object Lock retention and legal hold, and sets and extends them later. The
+> [Management connector](../object-storage/README.md#management-connector) creates Object Lock
+> buckets, the project compliance lock and a bucket's default retention. The 365-day ceiling
+> described in §4 still applies.
+
 ---
 
 ## 1. What the service is

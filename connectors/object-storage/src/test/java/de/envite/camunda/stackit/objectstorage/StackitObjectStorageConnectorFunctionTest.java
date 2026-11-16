@@ -169,14 +169,17 @@ class StackitObjectStorageConnectorFunctionTest {
     }
 
     @Test
-    @DisplayName("the service file names exactly this class")
+    @DisplayName("the service file names exactly the data-plane and the management connector")
     void serviceFileNamesThisClass() {
       final String serviceFile =
           TestResources.readString(
               "META-INF/services/io.camunda.connector.api.outbound.OutboundConnectorFunction");
 
-      assertThat(serviceFile.strip())
-          .isEqualTo(StackitObjectStorageConnectorFunction.class.getName());
+      assertThat(serviceFile.strip().lines().map(String::strip).toList())
+          .containsExactly(
+              StackitObjectStorageConnectorFunction.class.getName(),
+              "de.envite.camunda.stackit.objectstorage.management"
+                  + ".StackitObjectStorageManagementConnectorFunction");
     }
   }
 
