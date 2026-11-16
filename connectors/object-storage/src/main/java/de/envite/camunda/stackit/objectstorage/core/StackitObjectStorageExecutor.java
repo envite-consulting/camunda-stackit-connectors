@@ -26,9 +26,12 @@ import de.envite.camunda.stackit.objectstorage.model.request.DownloadObject;
 import de.envite.camunda.stackit.objectstorage.model.request.Expirations;
 import de.envite.camunda.stackit.objectstorage.model.request.HeadObject;
 import de.envite.camunda.stackit.objectstorage.model.request.ListObjects;
+import de.envite.camunda.stackit.objectstorage.model.request.ObjectLocks;
 import de.envite.camunda.stackit.objectstorage.model.request.ObjectStorageOperation;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignDownloadUrl;
 import de.envite.camunda.stackit.objectstorage.model.request.PresignUploadUrl;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectLegalHold;
+import de.envite.camunda.stackit.objectstorage.model.request.SetObjectRetention;
 import de.envite.camunda.stackit.objectstorage.model.request.StackitObjectStorageRequest;
 import de.envite.camunda.stackit.objectstorage.model.request.UploadObject;
 import de.envite.camunda.stackit.objectstorage.model.response.CopyObjectResult;
@@ -36,6 +39,8 @@ import de.envite.camunda.stackit.objectstorage.model.response.DeleteObjectResult
 import de.envite.camunda.stackit.objectstorage.model.response.DownloadObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.HeadObjectResult;
 import de.envite.camunda.stackit.objectstorage.model.response.ListObjectsResult;
+import de.envite.camunda.stackit.objectstorage.model.response.ObjectLegalHoldResult;
+import de.envite.camunda.stackit.objectstorage.model.response.ObjectRetentionResult;
 import de.envite.camunda.stackit.objectstorage.model.response.ObjectSummary;
 import de.envite.camunda.stackit.objectstorage.model.response.PresignedUrlResult;
 import de.envite.camunda.stackit.objectstorage.model.response.UploadObjectResult;
@@ -48,7 +53,9 @@ import io.camunda.connector.api.outbound.OutboundConnectorContext;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -59,8 +66,8 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -68,9 +75,12 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ObjectLockLegalHoldStatus;
+import software.amazon.awssdk.services.s3.model.ObjectLockRetentionMode;
+import software.amazon.awssdk.services.s3.model.PutObjectLegalHoldRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRetentionRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 import software.amazon.awssdk.services.s3.model.Tag;
 import software.amazon.awssdk.services.s3.model.Tagging;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -82,8 +92,8 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  *
  * <p>One executor serves one job: it owns an {@link S3Client} and, for the presigning operations,
  * an {@link S3Presigner} that it builds lazily, and {@link #close()} releases both. The presigner
- * is lazy because six of the eight operations never need one and building it opens no connection
- * but does allocate a signer and an endpoint resolver.
+ * is lazy because most operations never need one and building it opens no connection but does
+ * allocate a signer and an endpoint resolver.
  *
  * <p><strong>Stream ownership.</strong> {@code downloadObject} can hand the connector runtime a
  * {@link DocumentReturn} whose payload is still an open HTTP response. Closing the client while
@@ -99,8 +109,15 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
 
   private static final Pattern SHA256_HEX = Pattern.compile("[0-9a-fA-F]{64}");
 
+  /** Appended to Object Lock failures, which are almost always a bucket without Object Lock. */
+  private static final String OBJECT_LOCK_HINT =
+      "Object Lock works only in a bucket that was created with Object Lock enabled; it cannot be"
+          + " enabled on an existing bucket.";
+
   private final S3Client s3Client;
   private final Supplier<S3Presigner> presignerFactory;
+  private final UploadLimits uploadLimits;
+  private final Clock clock;
 
   private S3Presigner presigner;
   private boolean ownershipTransferred;
@@ -114,8 +131,22 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
    */
   public StackitObjectStorageExecutor(
       final S3Client s3Client, final Supplier<S3Presigner> presignerFactory) {
+    this(s3Client, presignerFactory, UploadLimits.STACKIT, Clock.systemUTC());
+  }
+
+  /**
+   * Creates an executor with explicit upload limits and clock, so that tests can exercise multipart
+   * uploads with small documents and Object Lock dates deterministically.
+   */
+  StackitObjectStorageExecutor(
+      final S3Client s3Client,
+      final Supplier<S3Presigner> presignerFactory,
+      final UploadLimits uploadLimits,
+      final Clock clock) {
     this.s3Client = s3Client;
     this.presignerFactory = presignerFactory;
+    this.uploadLimits = uploadLimits;
+    this.clock = clock;
   }
 
   /**
@@ -127,9 +158,27 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
    */
   public static StackitObjectStorageExecutor create(
       final StackitObjectStorageRequest request, final StackitS3ClientFactory clientFactory) {
+    return create(request, clientFactory, UploadLimits.STACKIT);
+  }
+
+  /**
+   * Creates an executor configured from the inputs of a connector job, with explicit upload limits.
+   *
+   * @param request the bound connector inputs; must not be {@code null}
+   * @param clientFactory the factory that builds the clients; must not be {@code null}
+   * @param uploadLimits where multipart uploads begin and how large their parts are; must not be
+   *     {@code null}
+   * @return an executor the caller must close
+   */
+  public static StackitObjectStorageExecutor create(
+      final StackitObjectStorageRequest request,
+      final StackitS3ClientFactory clientFactory,
+      final UploadLimits uploadLimits) {
     return new StackitObjectStorageExecutor(
         clientFactory.createClient(request.authentication(), request.configuration()),
-        () -> clientFactory.createPresigner(request.authentication(), request.configuration()));
+        () -> clientFactory.createPresigner(request.authentication(), request.configuration()),
+        uploadLimits,
+        Clock.systemUTC());
   }
 
   /**
@@ -152,6 +201,8 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
       case HeadObject head -> headObject(head);
       case PresignDownloadUrl presign -> presignDownloadUrl(presign);
       case PresignUploadUrl presign -> presignUploadUrl(presign);
+      case SetObjectRetention retention -> setObjectRetention(retention);
+      case SetObjectLegalHold legalHold -> setObjectLegalHold(legalHold);
     };
   }
 
@@ -163,58 +214,54 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     final String bucket = requireValidBucket(operation.bucket(), "bucket");
     final Document document = operation.document();
     final String key = resolveUploadKey(operation, document);
-    final String contentType = resolveContentType(operation.contentType(), document);
-    final Long size = document.metadata() == null ? null : document.metadata().getSize();
+    final String retentionMode =
+        lockInput(() -> ObjectLocks.retentionMode(operation.retentionMode())).orElse(null);
+    final Instant retainUntil =
+        retentionMode == null
+            ? null
+            : lockInput(() -> ObjectLocks.retainUntil(operation.retainUntil(), clock));
+    final boolean legalHold = Boolean.TRUE.equals(operation.legalHold());
 
-    final PutObjectRequest.Builder requestBuilder =
-        PutObjectRequest.builder().bucket(bucket).key(key).contentType(contentType);
-    if (operation.metadata() != null && !operation.metadata().isEmpty()) {
-      requestBuilder.metadata(operation.metadata());
-    }
-    if (operation.tags() != null && !operation.tags().isEmpty()) {
-      // The SDK's own Tagging adapter percent-encodes keys and values as the x-amz-tagging header
-      // requires; URLEncoder would turn a space into '+', which S3 stores as a literal plus.
-      requestBuilder.tagging(toTagging(operation.tags()));
-    }
-    if (Boolean.TRUE.equals(operation.serverSideEncryption())) {
-      // STACKIT supports SSE-S3 and SSE-C only. AES256 selects SSE-S3, where STACKIT holds the key;
-      // there is no SSE-KMS and therefore no key id to pass.
-      requestBuilder.serverSideEncryption(ServerSideEncryption.AES256);
-    }
-    if (size != null && size >= 0) {
-      requestBuilder.contentLength(size);
-    }
-    final String checksumSha256 = documentSha256(document);
-    if (checksumSha256 != null) {
-      requestBuilder.checksumSHA256(checksumSha256);
-    }
+    final DocumentUploader.ObjectAttributes attributes =
+        new DocumentUploader.ObjectAttributes(
+            bucket,
+            key,
+            resolveContentType(operation.contentType(), document),
+            operation.metadata(),
+            // The SDK's own Tagging adapter percent-encodes keys and values as the x-amz-tagging
+            // header requires; URLEncoder would turn a space into '+', which S3 stores as a plus.
+            operation.tags() == null || operation.tags().isEmpty()
+                ? null
+                : toTagging(operation.tags()),
+            // STACKIT supports SSE-S3 and SSE-C only. AES256 selects SSE-S3, where STACKIT holds
+            // the key; there is no SSE-KMS and therefore no key id to pass.
+            Boolean.TRUE.equals(operation.serverSideEncryption()),
+            retentionMode,
+            retainUntil,
+            legalHold);
 
     final String action = "uploading object '" + key + "' to bucket '" + bucket + "'";
-    try (InputStream content = size != null && size >= 0 ? document.asInputStream() : null) {
-      final RequestBody body = requestBody(document, content, size, contentType);
-      final var response = s3Client.putObject(requestBuilder.build(), body);
-      LOG.debug(
-          "Uploaded {} bytes to s3://{}/{}, integrity verified: {}",
-          size,
-          bucket,
-          key,
-          checksumSha256 != null);
-      return new UploadObjectResult(
-          bucket,
-          key,
-          response.eTag(),
-          response.versionId(),
-          response.serverSideEncryptionAsString(),
-          checksumSha256 != null,
-          checksumSha256);
-    } catch (final IOException e) {
-      throw StackitConnectorErrors.fatal(
-          StackitErrorCodes.UNEXPECTED_ERROR,
-          "Could not read the document while " + action + ": " + e.getMessage() + ".",
-          e);
-    } catch (final RuntimeException e) {
-      throw StackitS3ErrorMapper.map(e, action);
-    }
+    final DocumentUploader.Outcome outcome =
+        new DocumentUploader(s3Client, uploadLimits)
+            .upload(attributes, document, documentSha256(document), action);
+    LOG.debug(
+        "Uploaded s3://{}/{} in {} part(s), matched document store checksum: {}",
+        bucket,
+        key,
+        outcome.partCount(),
+        outcome.documentChecksumVerified());
+    return new UploadObjectResult(
+        bucket,
+        key,
+        outcome.eTag(),
+        outcome.versionId(),
+        outcome.serverSideEncryption(),
+        outcome.checksumSha256(),
+        outcome.documentChecksumVerified(),
+        outcome.partCount(),
+        retentionMode,
+        retainUntil,
+        legalHold);
   }
 
   private Object downloadObject(
@@ -281,13 +328,22 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     final DeleteObjectRequest.Builder requestBuilder =
         DeleteObjectRequest.builder().bucket(bucket).key(key);
     applyVersionId(operation.versionId(), requestBuilder::versionId);
+    if (Boolean.TRUE.equals(operation.bypassGovernanceRetention())) {
+      requestBuilder.bypassGovernanceRetention(true);
+    }
 
     try {
       final var response = s3Client.deleteObject(requestBuilder.build());
       return new DeleteObjectResult(bucket, key, response.versionId(), response.deleteMarker());
     } catch (final RuntimeException e) {
       throw StackitS3ErrorMapper.map(
-          e, "deleting object '" + key + "' from bucket '" + bucket + "'");
+          e,
+          "deleting object '" + key + "' from bucket '" + bucket + "'",
+          blankToNull(operation.versionId()) == null
+              ? null
+              : "If the version is under Object Lock, a legal hold or COMPLIANCE retention blocks"
+                  + " its deletion for everyone, and GOVERNANCE retention unless 'Bypass"
+                  + " governance retention' is set.");
     }
   }
 
@@ -394,7 +450,12 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
           response.eTag(),
           response.lastModified(),
           response.metadata(),
-          response.storageClassAsString());
+          response.storageClassAsString(),
+          response.objectLockModeAsString(),
+          response.objectLockRetainUntilDate(),
+          response.objectLockLegalHoldStatus() == null
+              ? null
+              : response.objectLockLegalHoldStatus() == ObjectLockLegalHoldStatus.ON);
     } catch (final S3Exception e) {
       if (StackitS3ErrorMapper.isMissingObject(e)) {
         requireBucketExists(bucket, key);
@@ -505,8 +566,101 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     }
   }
 
+  private ObjectRetentionResult setObjectRetention(final SetObjectRetention operation) {
+    final String bucket = requireValidBucket(operation.bucket(), "bucket");
+    final String key = operation.key();
+    final String mode =
+        lockInput(() -> ObjectLocks.retentionMode(operation.mode()))
+            .orElseThrow(() ->
+                StackitConnectorErrors.fatal(
+                    StackitErrorCodes.INVALID_INPUT,
+                    "Set the retention mode to GOVERNANCE or COMPLIANCE. To lift a GOVERNANCE"
+                        + " retention early, set a near date with 'Bypass governance retention'."));
+    final Instant retainUntil =
+        lockInput(() -> ObjectLocks.retainUntil(operation.retainUntil(), clock));
+
+    final PutObjectRetentionRequest.Builder requestBuilder =
+        PutObjectRetentionRequest.builder()
+            .bucket(bucket)
+            .key(key)
+            // The body is a small XML document. S3 requires a checksum on it, and the SDK would
+            // compute a CRC32 that STACKIT accepts but does not check; SHA-256 it does check.
+            .checksumAlgorithm(ChecksumAlgorithm.SHA256)
+            .retention(retention ->
+                retention
+                    .mode(ObjectLockRetentionMode.fromValue(mode))
+                    .retainUntilDate(retainUntil));
+    applyVersionId(operation.versionId(), requestBuilder::versionId);
+    if (Boolean.TRUE.equals(operation.bypassGovernanceRetention())) {
+      requestBuilder.bypassGovernanceRetention(true);
+    }
+
+    try {
+      s3Client.putObjectRetention(requestBuilder.build());
+      return new ObjectRetentionResult(
+          bucket, key, blankToNull(operation.versionId()), mode, retainUntil);
+    } catch (final RuntimeException e) {
+      throw StackitS3ErrorMapper.map(
+          e,
+          "setting the retention of object '" + key + "' in bucket '" + bucket + "'",
+          OBJECT_LOCK_HINT
+              + " A retention can be extended at any time, but shortened only if it is GOVERNANCE"
+              + " and 'Bypass governance retention' is set.");
+    }
+  }
+
+  private ObjectLegalHoldResult setObjectLegalHold(final SetObjectLegalHold operation) {
+    final String bucket = requireValidBucket(operation.bucket(), "bucket");
+    final String key = operation.key();
+    if (operation.legalHold() == null) {
+      throw StackitConnectorErrors.fatal(
+          StackitErrorCodes.INVALID_INPUT,
+          "Say whether to place or to lift the legal hold: the 'Legal hold' input is empty.");
+    }
+    final boolean legalHold = operation.legalHold();
+
+    final PutObjectLegalHoldRequest.Builder requestBuilder =
+        PutObjectLegalHoldRequest.builder()
+            .bucket(bucket)
+            .key(key)
+            // See setObjectRetention: SHA-256 is the checksum STACKIT verifies.
+            .checksumAlgorithm(ChecksumAlgorithm.SHA256)
+            .legalHold(hold ->
+                hold.status(
+                    legalHold ? ObjectLockLegalHoldStatus.ON : ObjectLockLegalHoldStatus.OFF));
+    applyVersionId(operation.versionId(), requestBuilder::versionId);
+
+    try {
+      s3Client.putObjectLegalHold(requestBuilder.build());
+      return new ObjectLegalHoldResult(bucket, key, blankToNull(operation.versionId()), legalHold);
+    } catch (final RuntimeException e) {
+      throw StackitS3ErrorMapper.map(
+          e,
+          (legalHold ? "placing a legal hold on" : "lifting the legal hold of")
+              + " object '"
+              + key
+              + "' in bucket '"
+              + bucket
+              + "'",
+          OBJECT_LOCK_HINT);
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Helpers
+
+  /**
+   * Interprets an Object Lock input, turning a parse failure into an {@code INVALID_INPUT}
+   * incident.
+   */
+  private static <T> T lockInput(final Supplier<T> parse) {
+    try {
+      return parse.get();
+    } catch (final IllegalArgumentException e) {
+      throw StackitConnectorErrors.fatal(StackitErrorCodes.INVALID_INPUT, e.getMessage(), e);
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
 
   private S3Presigner presigner() {
@@ -533,33 +687,6 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
         metadata.metadata(),
         content,
         format);
-  }
-
-  /**
-   * Builds the request body for an upload.
-   *
-   * @param content the open document stream when {@code size} is known, otherwise {@code null}
-   *     <p>When the document store knows the size, the stream is handed to the SDK with that length
-   *     and is streamed through to STACKIT without ever being held in memory - which is what makes
-   *     a 5 TB object possible at all.
-   *     <p>When the size is unknown, there is no way to set {@code Content-Length} up front, so the
-   *     SDK is given a {@code ContentStreamProvider} instead. It then buffers the body to determine
-   *     the length before sending, which costs heap proportional to the object size. Documents
-   *     produced by the Camunda document store always carry a size, so this branch is reached only
-   *     for an inline or external document whose producer did not report one.
-   */
-  private static RequestBody requestBody(
-      final Document document,
-      final InputStream content,
-      final Long size,
-      final String contentType) {
-    if (size != null && size >= 0) {
-      return RequestBody.fromInputStream(content, size);
-    }
-    LOG.warn(
-        "The document to upload reports no size, so the AWS SDK has to buffer it to determine"
-            + " Content-Length. Supply a document with known size for large uploads.");
-    return RequestBody.fromContentProvider(document::asInputStream, contentType);
   }
 
   /**

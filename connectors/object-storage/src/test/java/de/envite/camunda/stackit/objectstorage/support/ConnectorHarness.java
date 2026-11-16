@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.envite.camunda.stackit.objectstorage.StackitObjectStorageConnectorFunction;
+import de.envite.camunda.stackit.objectstorage.client.StackitS3ClientFactory;
+import de.envite.camunda.stackit.objectstorage.core.UploadLimits;
 import de.envite.camunda.stackit.objectstorage.model.response.DownloadObjectResult;
 import io.camunda.connector.api.document.Document;
 import io.camunda.connector.api.document.DocumentCreationRequest;
@@ -58,6 +60,7 @@ public final class ConnectorHarness {
   private final String endpoint;
   private final String accessKey;
   private final String secretAccessKey;
+  private final UploadLimits uploadLimits;
   private final ClusterLikeDocumentStore documentStore = new ClusterLikeDocumentStore();
   private final DocumentFactoryImpl documentFactory = new DocumentFactoryImpl(documentStore);
   private final ObjectMapper objectMapper = ConnectorsObjectMapperSupplier.getCopy();
@@ -73,10 +76,28 @@ public final class ConnectorHarness {
       final String endpoint,
       final String accessKey,
       final String secretAccessKey) {
+    this(region, endpoint, accessKey, secretAccessKey, UploadLimits.STACKIT);
+  }
+
+  private ConnectorHarness(
+      final String region,
+      final String endpoint,
+      final String accessKey,
+      final String secretAccessKey,
+      final UploadLimits uploadLimits) {
     this.region = region;
     this.endpoint = endpoint;
     this.accessKey = accessKey;
     this.secretAccessKey = secretAccessKey;
+    this.uploadLimits = uploadLimits;
+  }
+
+  /**
+   * The same connection, but with upload limits small enough to send a multipart upload of a few
+   * MiB. The copy has its own document store, so create the documents through it.
+   */
+  public ConnectorHarness withUploadLimits(final UploadLimits limits) {
+    return new ConnectorHarness(region, endpoint, accessKey, secretAccessKey, limits);
   }
 
   /** The document store behind {@link #createDocument}, which behaves like a real cluster's. */
@@ -86,7 +107,7 @@ public final class ConnectorHarness {
 
   /** The same harness, but resolving the secrets to different credentials. */
   public ConnectorHarness withCredentials(final String accessKey, final String secretAccessKey) {
-    return new ConnectorHarness(region, endpoint, accessKey, secretAccessKey);
+    return new ConnectorHarness(region, endpoint, accessKey, secretAccessKey, uploadLimits);
   }
 
   /**
@@ -124,7 +145,8 @@ public final class ConnectorHarness {
             .secret(ACCESS_KEY_SECRET, accessKey)
             .secret(SECRET_ACCESS_KEY_SECRET, secretAccessKey)
             .build();
-    return new StackitObjectStorageConnectorFunction().execute(context);
+    return new StackitObjectStorageConnectorFunction(new StackitS3ClientFactory(), uploadLimits)
+        .execute(context);
   }
 
   /** Runs one connector task built from {@code operationType} and {@code operation}. */

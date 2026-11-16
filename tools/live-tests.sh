@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Runs the live tests against a real STACKIT project: the connector's operations end to end, the
-# StorageGRID checksum probes and, if configured, the service account key flow.
+# StorageGRID checksum probes and, if a service account is configured, the key flow and the
+# management connector.
 #
 #   tools/live-tests.sh                 # reads .secrets/live-test.env
 #   tools/live-tests.sh -Dit.test=StorageGridChecksumProbeLiveIT   # extra Maven arguments
@@ -42,7 +43,7 @@ if [[ -n "$key_file" && "$key_file" != /* ]]; then
   key_file="$repo_root/$key_file"
 fi
 if [[ -n "$key_file" && ! -f "$key_file" ]]; then
-  echo "Note: $key_file does not exist - the service account key flow tests will be skipped."
+  echo "Note: $key_file does not exist - the key flow and management tests will be skipped."
   key_file=""
 fi
 export STACKIT_IT_SERVICE_ACCOUNT_KEY_FILE="$key_file"
@@ -54,7 +55,7 @@ echo "  S3 access key:       set"
 if [[ -n "$key_file" && -n "${STACKIT_IT_PROJECT_ID:-}" ]]; then
   echo "  service account key: set (project $STACKIT_IT_PROJECT_ID)"
 else
-  echo "  service account key: not configured - key flow tests will be skipped"
+  echo "  service account key: not configured - key flow and management tests will be skipped"
 fi
 echo
 

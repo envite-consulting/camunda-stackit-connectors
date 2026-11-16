@@ -18,6 +18,8 @@ package de.envite.camunda.stackit.objectstorage.core;
 
 import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
+import io.camunda.connector.api.error.ConnectorException;
+import io.camunda.connector.api.error.ConnectorRetryException;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Locale;
@@ -103,6 +105,33 @@ public final class StackitS3ErrorMapper {
   }
 
   /**
+   * Like {@link #map(Throwable, String)}, with an operation-specific hint appended to the message
+   * of a rejected request.
+   *
+   * <p>The hint is added only to {@code INVALID_INPUT} and {@code ACCESS_DENIED} failures, the two
+   * a caller can explain better than this class can: this class cannot know that a 403 on deleting
+   * a version may be Object Lock at work, but the delete operation does.
+   *
+   * @param failure the failure to map; must not be {@code null}
+   * @param action what the connector was doing, see {@link #map(Throwable, String)}
+   * @param hint a complete sentence to append; may be {@code null} for none
+   * @return the mapped exception
+   */
+  public static RuntimeException map(
+      final Throwable failure, final String action, final String hint) {
+    final RuntimeException mapped = map(failure, action);
+    if (hint == null
+        || mapped instanceof ConnectorRetryException
+        || !(mapped instanceof final ConnectorException connectorException)
+        || !(StackitErrorCodes.INVALID_INPUT.equals(connectorException.getErrorCode())
+            || StackitErrorCodes.ACCESS_DENIED.equals(connectorException.getErrorCode()))) {
+      return mapped;
+    }
+    return StackitConnectorErrors.fatal(
+        connectorException.getErrorCode(), connectorException.getMessage() + " " + hint, failure);
+  }
+
+  /**
    * Whether a client-side failure is the kind a retry can fix.
    *
    * <p>The SDK raises {@link SdkClientException} for two very different things: the network failing
@@ -162,9 +191,10 @@ public final class StackitS3ErrorMapper {
               + action
               + " because it does not match the SHA-256 checksum sent with it ("
               + detail
-              + "). Nothing was stored. The checksum is the one the Camunda document store recorded"
-              + " when the document was created, so the content read back from the document store"
-              + " differs from what was stored there. Check the document store before retrying.",
+              + "). Nothing was stored. The content changed on its way to STACKIT; if the checksum"
+              + " is the one the Camunda document store recorded when the document was created,"
+              + " the document store returned content that differs from what it recorded. Check"
+              + " the document store before retrying.",
           failure);
     }
     if (NOT_FOUND_CODES.contains(errorCode) || status == 404) {
@@ -284,6 +314,22 @@ public final class StackitS3ErrorMapper {
       final AwsErrorDetails details =
           failure instanceof S3Exception s3Exception ? s3Exception.awsErrorDetails() : null;
       description.append(", S3 error code ").append(details.errorCode());
+    }
+    // STACKIT's error messages are specific ("Content-MD5 OR x-amz-checksum- HTTP header is
+    // required for Put Object requests with Object Lock parameters") and carry no credentials. The
+    // authentication codes are left out all the same: their wording is about key material.
+    final String serviceMessage =
+        failure instanceof S3Exception s3Exception && s3Exception.awsErrorDetails() != null
+            ? s3Exception.awsErrorDetails().errorMessage()
+            : null;
+    if (serviceMessage != null
+        && !serviceMessage.isBlank()
+        && !AUTHENTICATION_CODES.contains(errorCode)) {
+      final String trimmed = serviceMessage.strip();
+      description
+          .append(", message \"")
+          .append(trimmed.length() > 300 ? trimmed.substring(0, 300) + "..." : trimmed)
+          .append('"');
     }
     if (failure.requestId() != null) {
       description.append(", request id ").append(failure.requestId());

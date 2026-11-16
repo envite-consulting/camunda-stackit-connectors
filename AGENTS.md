@@ -15,7 +15,7 @@ core/                          stackit-connector-core       shared across all co
 auth/                          stackit-connector-auth       STACKIT service account key flow
 connectors/
   pom.xml                      stackit-connectors-parent    parent for connector modules
-  object-storage/              stackit-connector-object-storage   ← implemented
+  object-storage/              stackit-connector-object-storage   ← implemented: data plane + management
   archiving/                   design doc only, no pom yet
   workflows/                   design doc only, no pom yet
 bundle/                        stackit-connectors-bundle    runnable Connector Runtime
@@ -103,7 +103,15 @@ default, or add a checksum algorithm, without re-running `StorageGridChecksumPro
 both regions. There is a regression test asserting those headers are absent — if you ever see
 it fail, do not "fix" it by relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
 checksum parameters; `ChecksumHeaderRegressionTest$PresignedUpload` pins that, so re-check it
-on SDK upgrades. Full analysis and sources:
+on SDK upgrades.
+
+Integrity comes from the opposite direction: the connector computes SHA-256 values itself and
+sends them as `x-amz-checksum-sha256` **headers**, the one checksum STACKIT verifies — on every
+upload (the document store's own SHA-256 where it exists), on every multipart part (with `SHA256`
+declared on `CreateMultipartUpload`, without which STACKIT refuses part checksums), and on the
+Object Lock requests. `OperationChecksumWireTest` pins each of these on the wire. Never replace
+them with an SDK-computed checksum (`checksumAlgorithm` on a streaming body), which becomes a
+trailer STACKIT discards. Full analysis and sources:
 [`docs/stackit-object-storage-compatibility.md`](docs/stackit-object-storage-compatibility.md).
 
 ### 4. Credentials never reach a log or an incident message
@@ -157,17 +165,35 @@ connector keeps an inline fallback for the same reason.
 Adding a credential chooser later is additive: a new property plus a template `version`
 bump. It requires `engines.camunda >= 8.10`, which we already declare.
 
-### Object Storage v1 is S3 data plane only
+### Object Storage ships two connectors, one per credential type
 
-The connector speaks the S3 data plane with static access keys. Bucket and credential
-provisioning live in STACKIT's management API (`object-storage.api.stackit.cloud`) and need
-the service account key flow — a different credential type. Mixing both auth models into one
-element template makes for a confusing UI, so control-plane operations are deferred.
+`connectors/object-storage` contains two connector functions in one jar, each with its own
+element template:
 
-That is why `auth/` has no consumer inside this repository yet. It is built and tested as
-the shared foundation for the Archiving, Workflows and KMS connectors and for Object Storage
-control-plane operations in a later release. Do not wire it into the Object Storage
-connector to "make it used".
+| Connector | API | Credential | Job type |
+| --- | --- | --- | --- |
+| `StackitObjectStorageConnectorFunction` | S3 data plane (`object.storage.<region>.onstackit.cloud`) | access key of a credentials group (SigV4) | `de.envite:stackit-object-storage:1` |
+| `management.StackitObjectStorageManagementConnectorFunction` | management API v2 (`object-storage.api.stackit.cloud`) | STACKIT service account (`auth/`, key flow) | `de.envite:stackit-object-storage-management:1` |
+
+They are separate templates because the credentials are. One template with both sets of
+credentials would show two unrelated credential groups, and the modeller would have to guess
+which one an operation uses. Splitting them along the API boundary also keeps every operation's
+credential obvious.
+
+They share one module and one shaded jar so that users mount a single file. The second connector
+is a second `<connector>` entry in the module's generator configuration and a second line in the
+`META-INF/services` file; forgetting either fails silently. Do not merge the two templates, and do
+not add management operations to the data-plane union or vice versa.
+
+The management connector is the first consumer of `auth/`. It holds a `static final
+StackitTokenProviderCache`, so jobs with the same key share a token. Its custom endpoint
+receives a bearer token and is therefore restricted to `https` on `*.stackit.cloud` (see
+`ManagementEndpoints`), unlike the data-plane endpoint, where a SigV4 signature never reveals the
+secret. `auth/` remains the foundation for the planned Archiving, Workflows and KMS connectors.
+
+Operations without inputs (`listBuckets`, `getComplianceLock`, ...) make the engine send no
+`operation` variable, which Jackson rejects for an external type id. `ManagementRequest`'s
+deserializer supplies an empty object in that case; keep it if you restructure the request.
 
 ### Connector `type` namespace
 
@@ -228,9 +254,15 @@ Three tiers, selected by JUnit tag:
   contains the access key ID) from a test.
 - Run the live tests before merging anything that changes how the connector talks to S3 — in
   particular every AWS SDK upgrade, which can change default checksum behaviour.
-- `StorageGridChecksumProbeLiveIT` is a probe, not a test of STACKIT: it records what STACKIT
-  does with the SDK's default checksums in `target/stackit-live-findings.txt`. Carry new
-  findings into `docs/stackit-object-storage-compatibility.md`.
+- `StorageGridChecksumProbeLiveIT` and `ObjectLockProbeLiveIT` are probes, not tests of STACKIT:
+  they record what STACKIT does with the SDK's default checksums, part checksums and Object Lock
+  requests in `target/stackit-live-findings.txt`. Carry new findings into
+  `docs/stackit-object-storage-compatibility.md`.
+- Live tests that need Object Lock create their own bucket with it and use `GOVERNANCE`
+  retention only. **Never `COMPLIANCE` in a test**: nobody can remove it, so the object and its
+  bucket would outlive the run by up to a year.
+- Exercise multipart uploads with `ConnectorHarness.withUploadLimits(...)` and parts of 5 MiB,
+  rather than uploading gigabytes.
 - Bind request models through
   `io.camunda.connector.runtime.test.outbound.OutboundConnectorContextBuilder` (note the
   package: `runtime.test`, not `connector.test`) with JSON fixtures shaped exactly as the

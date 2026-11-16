@@ -36,6 +36,11 @@ import java.util.Map;
  * @param lastModified when the object was last written
  * @param metadata the user metadata stored with the object
  * @param storageClass the storage class STACKIT reports
+ * @param objectLockMode the Object Lock retention mode of this version, {@code GOVERNANCE} or
+ *     {@code COMPLIANCE}, or {@code null} if it has no retention
+ * @param objectLockRetainUntilDate when that retention ends, or {@code null}
+ * @param objectLockLegalHold whether a legal hold is in place; {@code null} if the object exists
+ *     but STACKIT reported no legal hold status, which is the case for an object that never had one
  */
 public record HeadObjectResult(
     boolean exists,
@@ -47,7 +52,10 @@ public record HeadObjectResult(
     String eTag,
     Instant lastModified,
     Map<String, String> metadata,
-    String storageClass) {
+    String storageClass,
+    String objectLockMode,
+    Instant objectLockRetainUntilDate,
+    Boolean objectLockLegalHold) {
 
   /**
    * The result for an object that does not exist.
@@ -57,6 +65,7 @@ public record HeadObjectResult(
    * @return a result with {@code exists == false} and no metadata
    */
   public static HeadObjectResult notFound(final String bucket, final String key) {
-    return new HeadObjectResult(false, bucket, key, null, null, null, null, null, null, null);
+    return new HeadObjectResult(
+        false, bucket, key, null, null, null, null, null, null, null, null, null, null);
   }
 }

@@ -66,6 +66,19 @@ public final class TestDocument implements Document {
         bytes, metadata, new CamundaDocumentReferenceImpl("test-store", "doc-1", hash, metadata));
   }
 
+  /**
+   * A document from the Camunda document store whose metadata reports no size. Real stores always
+   * report one; this exercises the path that cannot rely on it.
+   */
+  public static TestDocument fromCamundaStoreWithoutSize(
+      final String fileName, final String contentType, final String content, final String hash) {
+    final Metadata metadata = new Metadata(contentType, fileName, null);
+    return new TestDocument(
+        content.getBytes(StandardCharsets.UTF_8),
+        metadata,
+        new CamundaDocumentReferenceImpl("test-store", "doc-1", hash, metadata));
+  }
+
   /** The hex SHA-256 of {@code content}, as a Camunda document store records it. */
   public static String sha256Hex(final String content) {
     try {

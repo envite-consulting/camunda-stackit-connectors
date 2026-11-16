@@ -29,6 +29,9 @@
     "tags": {
       "env": "prod"
     },
-    "serverSideEncryption": true
+    "serverSideEncryption": true,
+    "retentionMode": "GOVERNANCE",
+    "retainUntil": "2027-01-31",
+    "legalHold": true
   }
 }

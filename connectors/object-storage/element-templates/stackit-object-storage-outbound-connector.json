@@ -2,10 +2,10 @@
   "$schema" : "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
   "name" : "STACKIT Object Storage Outbound Connector",
   "id" : "de.envite.connectors.stackit.objectstorage.v1",
-  "description" : "Reads and writes objects in STACKIT Object Storage, the S3-compatible object store of the STACKIT sovereign cloud. Uploads and downloads Camunda documents, copies, deletes, lists and inspects objects, and creates presigned URLs.",
-  "keywords" : [ "STACKIT", "object storage", "S3", "bucket", "upload file", "download file", "presigned URL", "sovereign cloud", "storage", "blob", "file" ],
+  "description" : "Reads and writes objects in STACKIT Object Storage, the S3-compatible object store of the STACKIT sovereign cloud. Uploads and downloads Camunda documents with verified integrity, copies, deletes, lists and inspects objects, creates presigned URLs, and protects objects with Object Lock retention and legal holds.",
+  "keywords" : [ "STACKIT", "object storage", "S3", "bucket", "upload file", "download file", "presigned URL", "object lock", "retention", "legal hold", "WORM", "sovereign cloud", "storage", "blob", "file" ],
   "documentationRef" : "https://github.com/envite-consulting/camunda-stackit-connectors/blob/main/connectors/object-storage/README.md",
-  "version" : 1,
+  "version" : 2,
   "category" : {
     "id" : "connectors",
     "name" : "Connectors"
@@ -161,6 +161,12 @@
     }, {
       "name" : "Create presigned upload URL",
       "value" : "presignUploadUrl"
+    }, {
+      "name" : "Set object retention (Object Lock)",
+      "value" : "setObjectRetention"
+    }, {
+      "name" : "Set legal hold (Object Lock)",
+      "value" : "setObjectLegalHold"
     } ]
   }, {
     "id" : "uploadObjectBucket",
@@ -448,6 +454,74 @@
     },
     "type" : "Boolean"
   }, {
+    "id" : "uploadObjectRetentionMode",
+    "label" : "Object Lock retention",
+    "description" : "Protects the uploaded version against deletion and overwriting until 'Retain until'. Needs a bucket created with Object Lock enabled. COMPLIANCE can never be shortened or removed, by anyone, and needs the project compliance lock; GOVERNANCE can be lifted by credentials allowed to bypass it.",
+    "optional" : true,
+    "value" : "NONE",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.retentionMode",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "None",
+      "value" : "NONE"
+    }, {
+      "name" : "Governance",
+      "value" : "GOVERNANCE"
+    }, {
+      "name" : "Compliance",
+      "value" : "COMPLIANCE"
+    } ]
+  }, {
+    "id" : "uploadObjectRetainUntil",
+    "label" : "Retain until",
+    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P1Y or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.retainUntil",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "allMatch" : [ {
+        "property" : "uploadObjectRetentionMode",
+        "oneOf" : [ "GOVERNANCE", "COMPLIANCE" ],
+        "type" : "simple"
+      }, {
+        "property" : "operationType",
+        "equals" : "uploadObject",
+        "type" : "simple"
+      } ]
+    },
+    "type" : "String"
+  }, {
+    "id" : "uploadObjectLegalHold",
+    "label" : "Legal hold",
+    "description" : "Places an Object Lock legal hold on the uploaded version: it cannot be deleted or overwritten until the hold is lifted with 'Set legal hold'. Needs a bucket created with Object Lock enabled.",
+    "optional" : true,
+    "value" : false,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.legalHold",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "uploadObject",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
     "id" : "downloadObjectBucket",
     "label" : "Bucket",
     "description" : "Name of the bucket the object is read from.",
@@ -618,6 +692,24 @@
       "type" : "simple"
     },
     "type" : "String"
+  }, {
+    "id" : "deleteObjectBypassGovernanceRetention",
+    "label" : "Bypass governance retention",
+    "description" : "Permanently deletes a version that is under GOVERNANCE Object Lock retention. Needs a version ID. Has no effect on COMPLIANCE retention or a legal hold, which block deletion regardless.",
+    "optional" : true,
+    "value" : false,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bypassGovernanceRetention",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "deleteObject",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
   }, {
     "id" : "copyObjectSourceBucket",
     "label" : "Source bucket",
@@ -1036,10 +1128,215 @@
     },
     "type" : "String"
   }, {
+    "id" : "setObjectRetentionBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket. It must have been created with Object Lock enabled.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectRetentionKey",
+    "label" : "Object key",
+    "description" : "Key of the object to protect.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectRetentionVersionId",
+    "label" : "Version ID",
+    "description" : "The object version to protect. Leave empty for the current version. Object Lock protects versions, so pass the version ID the upload returned to be sure to protect exactly what was uploaded.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectRetentionMode",
+    "label" : "Retention mode",
+    "description" : "GOVERNANCE: credentials allowed to bypass governance retention can shorten or remove it. COMPLIANCE: nobody can shorten or remove it before it expires, and the object cannot be deleted until then; it requires the project compliance lock.",
+    "optional" : false,
+    "value" : "GOVERNANCE",
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.mode",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Governance",
+      "value" : "GOVERNANCE"
+    }, {
+      "name" : "Compliance",
+      "value" : "COMPLIANCE"
+    } ]
+  }, {
+    "id" : "setObjectRetentionRetainUntil",
+    "label" : "Retain until",
+    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P1Y or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.retainUntil",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectRetentionBypassGovernanceRetention",
+    "label" : "Bypass governance retention",
+    "description" : "Needed to shorten or remove a GOVERNANCE retention. Has no effect on COMPLIANCE retention, which nobody can shorten.",
+    "optional" : true,
+    "value" : false,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bypassGovernanceRetention",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectRetention",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
+    "id" : "setObjectLegalHoldBucket",
+    "label" : "Bucket",
+    "description" : "Name of the bucket. It must have been created with Object Lock enabled.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|[a-z0-9][a-z0-9-]{1,61}[a-z0-9])$",
+        "message" : "A bucket name must be 3-63 characters long, contain only lower-case letters, digits and hyphens, and start and end with a letter or digit. A FEEL expression (=myBucket) or a secret reference ({{secrets.MY_BUCKET}}) may be used instead."
+      }
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.bucket",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectLegalHold",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectLegalHoldKey",
+    "label" : "Object key",
+    "description" : "Key of the object.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectLegalHold",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectLegalHoldVersionId",
+    "label" : "Version ID",
+    "description" : "The object version. Leave empty for the current version.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.versionId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectLegalHold",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "setObjectLegalHoldLegalHold",
+    "label" : "Legal hold",
+    "description" : "Checked places the hold, unchecked lifts it.",
+    "optional" : false,
+    "value" : true,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.legalHold",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "setObjectLegalHold",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
     "id" : "version",
     "label" : "Version",
     "description" : "Version of the element template",
-    "value" : "1",
+    "value" : "2",
     "group" : "connector",
     "binding" : {
       "key" : "elementTemplateVersion",
@@ -1126,7 +1423,7 @@
   } ],
   "steps" : [ {
     "name" : "Upload object",
-    "description" : "Uploads a document to a bucket (PutObject). Streams the document, so objects up to the STACKIT limit of 5 TB are supported.",
+    "description" : "Uploads a document to a bucket. STACKIT verifies a SHA-256 checksum of every upload before storing it; documents over 5 GiB go up as a multipart upload. Can apply Object Lock retention and legal hold with the upload.",
     "keywords" : [ "upload", "put", "store", "write", "putObject", "upload file", "save file" ],
     "presetId" : "operationType_uploadObject"
   }, {
@@ -1164,6 +1461,16 @@
     "description" : "Creates a time-limited URL that uploads an object with HTTP PUT and no credentials. Computed locally, so nothing is sent to STACKIT.",
     "keywords" : [ "presign", "presigned", "signed url", "upload link", "temporary url", "putObject", "direct upload" ],
     "presetId" : "operationType_presignUploadUrl"
+  }, {
+    "name" : "Set object retention (Object Lock)",
+    "description" : "Protects an object version against deletion and overwriting until a date (PutObjectRetention). Works only in a bucket created with Object Lock enabled. COMPLIANCE retention can never be shortened or removed, only extended; STACKIT caps a retention at 365 days.",
+    "keywords" : [ "object lock", "retention", "worm", "immutable", "compliance", "governance" ],
+    "presetId" : "operationType_setObjectRetention"
+  }, {
+    "name" : "Set legal hold (Object Lock)",
+    "description" : "Places or lifts a legal hold on an object version (PutObjectLegalHold). A held version cannot be deleted or overwritten until the hold is lifted, regardless of retention. Works only in a bucket created with Object Lock enabled.",
+    "keywords" : [ "object lock", "legal hold", "litigation hold", "worm", "immutable" ],
+    "presetId" : "operationType_setObjectLegalHold"
   } ],
   "presets" : [ {
     "id" : "operationType_uploadObject",
@@ -1204,6 +1511,16 @@
     "id" : "operationType_presignUploadUrl",
     "properties" : {
       "operationType" : "presignUploadUrl"
+    }
+  }, {
+    "id" : "operationType_setObjectRetention",
+    "properties" : {
+      "operationType" : "setObjectRetention"
+    }
+  }, {
+    "id" : "operationType_setObjectLegalHold",
+    "properties" : {
+      "operationType" : "setObjectLegalHold"
     }
   } ],
   "icon" : {

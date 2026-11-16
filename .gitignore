@@ -46,3 +46,6 @@ credentials.json
 
 # Node tooling (tools/validate-element-templates.mjs); tools/package-lock.json IS committed
 tools/node_modules/
+
+# Claude Code agent worktrees
+.claude/worktrees/
