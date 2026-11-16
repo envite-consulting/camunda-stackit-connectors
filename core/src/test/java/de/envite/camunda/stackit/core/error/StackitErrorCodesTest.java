@@ -47,6 +47,7 @@ class StackitErrorCodesTest {
             "ACCESS_DENIED",
             "NOT_FOUND",
             "ALREADY_EXISTS",
+            "CONFLICT",
             "INVALID_INPUT",
             "RATE_LIMITED",
             "SERVICE_UNAVAILABLE",
