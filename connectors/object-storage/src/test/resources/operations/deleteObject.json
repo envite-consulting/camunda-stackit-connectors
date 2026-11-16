@@ -11,6 +11,7 @@
   "operation": {
     "bucket": "stackit-invoices",
     "key": "2026/01/invoice.pdf",
-    "versionId": "v7"
+    "versionId": "v7",
+    "bypassGovernanceRetention": true
   }
 }

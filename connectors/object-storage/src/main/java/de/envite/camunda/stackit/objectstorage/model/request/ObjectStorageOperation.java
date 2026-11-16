@@ -27,7 +27,7 @@ import io.camunda.connector.generator.java.annotation.TemplateDiscriminatorPrope
  * classic {@code OutboundConnectorFunction} API rather than the newer {@code @Operation} provider
  * API: a union keeps the shared Authentication and Configuration groups in the generated element
  * template once, whereas the provider API repeats every shared property once per operation, which
- * for eight operations yields an element template nobody can use.
+ * for ten operations yields an element template nobody can use.
  *
  * <p>The discriminator is an <em>external</em> Jackson property: the job variables carry {@code
  * operationType} as a sibling of {@code operation}, not inside it. The {@code @JsonTypeInfo} that
@@ -48,7 +48,7 @@ import io.camunda.connector.generator.java.annotation.TemplateDiscriminatorPrope
  *
  * <p>Every property of every subtype declares both an explicit {@code id} and an explicit {@code
  * binding}. Element template property ids have to be unique within a template while bindings may
- * repeat, so the eight {@code bucket} inputs share the binding {@code operation.bucket} but each
+ * repeat, so the ten {@code bucket} inputs share the binding {@code operation.bucket} but each
  * declares its own id ({@code uploadObjectBucket}, {@code downloadObjectBucket}, ...). The {@code
  * operation} field itself carries {@code @NestedProperties(addNestedPath = false)}, which keeps the
  * generator from prefixing those hand-picked ids with {@code operation.}.
@@ -61,7 +61,9 @@ import io.camunda.connector.generator.java.annotation.TemplateDiscriminatorPrope
   @JsonSubTypes.Type(value = ListObjects.class, name = ListObjects.ID),
   @JsonSubTypes.Type(value = HeadObject.class, name = HeadObject.ID),
   @JsonSubTypes.Type(value = PresignDownloadUrl.class, name = PresignDownloadUrl.ID),
-  @JsonSubTypes.Type(value = PresignUploadUrl.class, name = PresignUploadUrl.ID)
+  @JsonSubTypes.Type(value = PresignUploadUrl.class, name = PresignUploadUrl.ID),
+  @JsonSubTypes.Type(value = SetObjectRetention.class, name = SetObjectRetention.ID),
+  @JsonSubTypes.Type(value = SetObjectLegalHold.class, name = SetObjectLegalHold.ID)
 })
 @TemplateDiscriminatorProperty(
     label = "Operation",
@@ -77,7 +79,9 @@ public sealed interface ObjectStorageOperation
         ListObjects,
         HeadObject,
         PresignDownloadUrl,
-        PresignUploadUrl {
+        PresignUploadUrl,
+        SetObjectRetention,
+        SetObjectLegalHold {
 
   /**
    * The discriminator value of this operation, identical to the {@code operationType} the engine

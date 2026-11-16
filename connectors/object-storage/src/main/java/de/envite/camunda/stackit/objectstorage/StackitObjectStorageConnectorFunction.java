@@ -19,6 +19,7 @@ package de.envite.camunda.stackit.objectstorage;
 import de.envite.camunda.stackit.core.template.TemplateGroups;
 import de.envite.camunda.stackit.objectstorage.client.StackitS3ClientFactory;
 import de.envite.camunda.stackit.objectstorage.core.StackitObjectStorageExecutor;
+import de.envite.camunda.stackit.objectstorage.core.UploadLimits;
 import de.envite.camunda.stackit.objectstorage.model.request.StackitObjectStorageRequest;
 import io.camunda.connector.api.annotation.OutboundConnector;
 import io.camunda.connector.api.outbound.OutboundConnectorContext;
@@ -61,15 +62,16 @@ import org.slf4j.LoggerFactory;
 @ElementTemplate(
     id = StackitObjectStorageConnectorFunction.TEMPLATE_ID,
     name = "STACKIT Object Storage Outbound Connector",
-    version = 1,
+    version = 2,
     engineVersion = "^8.10",
     icon = "icon.svg",
     documentationRef =
         "https://github.com/envite-consulting/camunda-stackit-connectors/blob/main/connectors/object-storage/README.md",
     description =
         "Reads and writes objects in STACKIT Object Storage, the S3-compatible object store of the"
-            + " STACKIT sovereign cloud. Uploads and downloads Camunda documents, copies, deletes,"
-            + " lists and inspects objects, and creates presigned URLs.",
+            + " STACKIT sovereign cloud. Uploads and downloads Camunda documents with verified"
+            + " integrity, copies, deletes, lists and inspects objects, creates presigned URLs, and"
+            + " protects objects with Object Lock retention and legal holds.",
     keywords = {
       "STACKIT",
       "object storage",
@@ -78,6 +80,10 @@ import org.slf4j.LoggerFactory;
       "upload file",
       "download file",
       "presigned URL",
+      "object lock",
+      "retention",
+      "legal hold",
+      "WORM",
       "sovereign cloud",
       "storage",
       "blob",
@@ -107,6 +113,7 @@ public class StackitObjectStorageConnectorFunction implements OutboundConnectorF
       LoggerFactory.getLogger(StackitObjectStorageConnectorFunction.class);
 
   private final StackitS3ClientFactory clientFactory;
+  private final UploadLimits uploadLimits;
 
   /**
    * Creates the connector with the default client factory; used by the runtime's service loader.
@@ -121,7 +128,23 @@ public class StackitObjectStorageConnectorFunction implements OutboundConnectorF
    * @param clientFactory the factory that builds the S3 clients; must not be {@code null}
    */
   public StackitObjectStorageConnectorFunction(final StackitS3ClientFactory clientFactory) {
+    this(clientFactory, UploadLimits.STACKIT);
+  }
+
+  /**
+   * Creates the connector with a specific client factory and upload limits.
+   *
+   * <p>Exists for tests, which need a multipart upload without uploading gigabytes. A runtime has
+   * no reason to change {@link UploadLimits#STACKIT}.
+   *
+   * @param clientFactory the factory that builds the S3 clients; must not be {@code null}
+   * @param uploadLimits where multipart uploads begin and how large their parts are; must not be
+   *     {@code null}
+   */
+  public StackitObjectStorageConnectorFunction(
+      final StackitS3ClientFactory clientFactory, final UploadLimits uploadLimits) {
     this.clientFactory = clientFactory;
+    this.uploadLimits = uploadLimits;
   }
 
   @Override
@@ -134,7 +157,7 @@ public class StackitObjectStorageConnectorFunction implements OutboundConnectorF
         request.configuration().region().displayLabel());
 
     try (StackitObjectStorageExecutor executor =
-        StackitObjectStorageExecutor.create(request, clientFactory)) {
+        StackitObjectStorageExecutor.create(request, clientFactory, uploadLimits)) {
       return executor.execute(request.operation(), context);
     }
   }
