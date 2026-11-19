@@ -293,7 +293,7 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
       // of the S3 client moves with the stream - see the class documentation.
       ownershipTransferred = true;
       return DocumentReturn.of(
-          closingStream(stream),
+          closingStream(new AbortOnEarlyClose(stream)),
           contentType,
           fileName,
           (content, choice) ->
@@ -302,7 +302,7 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
 
     // Legacy path: an element template that predates the response-format dropdown. Upload the
     // payload to the document store, which is the only format such a template ever produced.
-    try (ResponseInputStream<GetObjectResponse> owned = stream) {
+    try (InputStream owned = new AbortOnEarlyClose(stream)) {
       final Document document =
           context.create(
               DocumentCreationRequest.from(owned)
@@ -500,6 +500,10 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
           "Could not confirm that bucket {} exists (HTTP {}); reporting the object as missing",
           bucket,
           e.statusCode());
+    } catch (final RuntimeException e) {
+      // A network failure on this second request must surface with an error code like any other.
+      throw StackitS3ErrorMapper.map(
+          e, "checking that bucket '" + bucket + "' exists after object '" + key + "' was missing");
     }
   }
 
@@ -717,8 +721,10 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
   }
 
   private static String resolveUploadKey(final UploadObject operation, final Document document) {
-    final String explicitKey = blankToNull(operation.key());
-    if (explicitKey != null) {
+    // Used verbatim, like the key of every other operation: a key trimmed here could not be found
+    // again by a download given the same input.
+    final String explicitKey = operation.key();
+    if (explicitKey != null && !explicitKey.isBlank()) {
       return explicitKey;
     }
     final String fileName =
@@ -821,6 +827,54 @@ public class StackitObjectStorageExecutor implements AutoCloseable {
     final int lastSlash = key.lastIndexOf('/');
     final String candidate = lastSlash < 0 ? key : key.substring(lastSlash + 1);
     return candidate.isBlank() ? "object" : candidate;
+  }
+
+  /**
+   * A download stream that aborts the HTTP connection when it is closed before its end.
+   *
+   * <p>Closing a {@link ResponseInputStream} early makes the HTTP client read the rest of the
+   * object, so that the connection can be reused. When the runtime gives up on a download - a text
+   * download over the variable size limit, a document store that failed half-way - that would mean
+   * transferring the remaining gigabytes only to discard them. The executor releases its S3 client
+   * right after the download anyway, so no connection would be reused.
+   */
+  static final class AbortOnEarlyClose extends FilterInputStream {
+
+    private final ResponseInputStream<?> response;
+    private boolean endReached;
+
+    AbortOnEarlyClose(final ResponseInputStream<?> response) {
+      super(response);
+      this.response = response;
+    }
+
+    @Override
+    public int read() throws IOException {
+      final int next = super.read();
+      endReached |= next < 0;
+      return next;
+    }
+
+    @Override
+    public int read(final byte[] buffer, final int offset, final int length) throws IOException {
+      final int count = super.read(buffer, offset, length);
+      endReached |= count < 0;
+      return count;
+    }
+
+    @Override
+    public void close() throws IOException {
+      if (endReached) {
+        super.close();
+        return;
+      }
+      response.abort();
+      try {
+        super.close();
+      } catch (final IOException e) {
+        LOG.debug("Ignoring a failure to close an aborted download stream", e);
+      }
+    }
   }
 
   /** A view of {@code stream} whose {@code close()} also releases this executor's clients. */

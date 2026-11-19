@@ -19,7 +19,6 @@ package de.envite.camunda.stackit.objectstorage.core;
 import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import io.camunda.connector.api.error.ConnectorException;
-import io.camunda.connector.api.error.ConnectorRetryException;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Locale;
@@ -121,7 +120,7 @@ public final class StackitS3ErrorMapper {
       final Throwable failure, final String action, final String hint) {
     final RuntimeException mapped = map(failure, action);
     if (hint == null
-        || mapped instanceof ConnectorRetryException
+        || StackitConnectorErrors.isRetryable(mapped)
         || !(mapped instanceof final ConnectorException connectorException)
         || !(StackitErrorCodes.INVALID_INPUT.equals(connectorException.getErrorCode())
             || StackitErrorCodes.ACCESS_DENIED.equals(connectorException.getErrorCode()))) {
@@ -208,7 +207,7 @@ public final class StackitS3ErrorMapper {
               + " region.",
           failure);
     }
-    if (ALREADY_EXISTS_CODES.contains(errorCode) || status == 409) {
+    if (ALREADY_EXISTS_CODES.contains(errorCode)) {
       return StackitConnectorErrors.fatal(
           StackitErrorCodes.ALREADY_EXISTS,
           "STACKIT Object Storage reported that the resource already exists while "
@@ -218,6 +217,26 @@ public final class StackitS3ErrorMapper {
               + "). Bucket names are globally unique across all STACKIT customers, so a name may"
               + " be taken by another project.",
           failure);
+    }
+    if (status == 409) {
+      // None of the data-plane operations creates anything, so a 409 here is a conflict with the
+      // state of the bucket or object - or, for OperationAborted, with a concurrent request.
+      final String message =
+          "STACKIT Object Storage refused the request because it conflicts with the current state"
+              + " of the bucket or object while "
+              + action
+              + " ("
+              + detail
+              + ").";
+      return "operationaborted".equals(errorCode)
+          ? StackitConnectorErrors.retryable(
+              StackitErrorCodes.CONFLICT,
+              message
+                  + " Another request on the same resource was in progress; the connector"
+                  + " will retry.",
+              failure,
+              CONNECTION_BACKOFF)
+          : StackitConnectorErrors.fatal(StackitErrorCodes.CONFLICT, message, failure);
     }
     if (AUTHENTICATION_CODES.contains(errorCode) || status == 401) {
       return StackitConnectorErrors.fatal(
@@ -279,6 +298,20 @@ public final class StackitS3ErrorMapper {
                   + " STACKIT does not implement this request, so retrying cannot help; check the"
                   + " compatibility notes in the connector README.",
               failure);
+    }
+    if ("requesttimeout".equals(errorCode)) {
+      // HTTP 400, but nothing is wrong with the input: STACKIT stopped waiting for the request
+      // body.
+      return StackitConnectorErrors.retryable(
+          StackitErrorCodes.CONNECTION_ERROR,
+          "STACKIT Object Storage timed out waiting for the request body while "
+              + action
+              + " ("
+              + detail
+              + "). The connector will retry; if it persists, check the network between the"
+              + " connector runtime and STACKIT.",
+          failure,
+          CONNECTION_BACKOFF);
     }
     if (status == 400) {
       return StackitConnectorErrors.fatal(

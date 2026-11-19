@@ -43,6 +43,9 @@ public record UploadLimits(long singleRequestLimit, int minimumPartSize, int max
   /** The largest part STACKIT accepts: 5 GiB. */
   public static final long MAXIMUM_PART_SIZE = 5L * 1024 * MIB;
 
+  /** The largest object STACKIT stores: 5 TiB. */
+  public static final long MAXIMUM_OBJECT_SIZE = 5L * 1024 * 1024 * MIB;
+
   /**
    * The part size for a document of {@code size} bytes: {@link #minimumPartSize()}, or as much
    * more, rounded up to whole MiB, as {@link #maximumParts()} parts need to hold the document.
@@ -56,18 +59,27 @@ public record UploadLimits(long singleRequestLimit, int minimumPartSize, int max
     if (size == null || size < 0) {
       return minimumPartSize;
     }
+    if (size > MAXIMUM_OBJECT_SIZE) {
+      throw tooLarge(size);
+    }
     final long needed = (size + maximumParts - 1) / maximumParts;
     if (needed <= minimumPartSize) {
       return minimumPartSize;
     }
     final long partSize = (needed + MIB - 1) / MIB * MIB;
     if (partSize > MAXIMUM_PART_SIZE || partSize > Integer.MAX_VALUE - 8) {
-      throw StackitConnectorErrors.fatal(
-          StackitErrorCodes.INVALID_INPUT,
-          "The document is "
-              + size
-              + " bytes, more than STACKIT Object Storage can store as one object (5 TB).");
+      // Unreachable with the STACKIT limits, whose largest object needs parts of 525 MiB; guards
+      // test limits with few parts.
+      throw tooLarge(size);
     }
     return (int) partSize;
+  }
+
+  private static RuntimeException tooLarge(final long size) {
+    return StackitConnectorErrors.fatal(
+        StackitErrorCodes.INVALID_INPUT,
+        "The document is "
+            + size
+            + " bytes, more than STACKIT Object Storage can store as one object (5 TiB).");
   }
 }

@@ -30,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
+import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import io.camunda.connector.api.error.ConnectorException;
 import io.camunda.connector.api.error.ConnectorRetryException;
@@ -323,7 +324,7 @@ class KeyFlowTokenProviderTest {
         client.awaitFirstRequest();
 
         assertThatThrownBy(provider::accessToken)
-            .isInstanceOf(ConnectorRetryException.class)
+            .matches(StackitConnectorErrors::isRetryable, "is retryable")
             .hasMessageContaining("waiting for another job's token request")
             .extracting(e -> ((ConnectorException) e).getErrorCode())
             .isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
@@ -374,7 +375,7 @@ class KeyFlowTokenProviderTest {
         for (final Future<String> result : results) {
           assertThatThrownBy(() -> result.get(30, TimeUnit.SECONDS))
               .cause()
-              .isInstanceOf(ConnectorRetryException.class)
+              .matches(StackitConnectorErrors::isRetryable, "is retryable")
               .extracting(e -> ((ConnectorException) e).getErrorCode())
               .isEqualTo(StackitErrorCodes.SERVICE_UNAVAILABLE);
         }
@@ -467,7 +468,7 @@ class KeyFlowTokenProviderTest {
 
       assertThatThrownBy(provider::accessToken)
           .isInstanceOf(ConnectorException.class)
-          .isNotInstanceOf(ConnectorRetryException.class)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable")
           .hasMessageContaining("rejected the service account key")
           .hasMessageContaining("invalid_grant")
           .hasMessageContaining("key is inactive")
@@ -541,7 +542,7 @@ class KeyFlowTokenProviderTest {
       final KeyFlowTokenProvider provider = provider();
 
       assertThatThrownBy(provider::accessToken)
-          .isInstanceOf(ConnectorRetryException.class)
+          .matches(StackitConnectorErrors::isRetryable, "is retryable")
           .hasMessageContaining("429")
           .satisfies(e -> {
             assertThat(((ConnectorException) e).getErrorCode())
@@ -559,7 +560,7 @@ class KeyFlowTokenProviderTest {
               .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "86400")));
 
       assertThatThrownBy(provider()::accessToken)
-          .isInstanceOf(ConnectorRetryException.class)
+          .matches(StackitConnectorErrors::isRetryable, "is retryable")
           .extracting(e -> ((ConnectorRetryException) e).getBackoffDuration())
           .isEqualTo(Duration.ofSeconds(60));
     }
@@ -571,7 +572,7 @@ class KeyFlowTokenProviderTest {
       wireMock.stubFor(post(urlEqualTo(TOKEN_PATH)).willReturn(aResponse().withStatus(status)));
 
       assertThatThrownBy(provider()::accessToken)
-          .isInstanceOf(ConnectorRetryException.class)
+          .matches(StackitConnectorErrors::isRetryable, "is retryable")
           .hasMessageContaining(String.valueOf(status))
           .satisfies(e -> {
             assertThat(((ConnectorException) e).getErrorCode())
@@ -592,7 +593,7 @@ class KeyFlowTokenProviderTest {
           new KeyFlowTokenProvider(key(null), dead, null, HttpClient.newHttpClient(), clock);
 
       assertThatThrownBy(provider::accessToken)
-          .isInstanceOf(ConnectorRetryException.class)
+          .matches(StackitConnectorErrors::isRetryable, "is retryable")
           .hasMessageContaining("could not be reached")
           .extracting(e -> ((ConnectorException) e).getErrorCode())
           .isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
@@ -611,7 +612,7 @@ class KeyFlowTokenProviderTest {
 
       assertThatThrownBy(provider()::accessToken)
           .isInstanceOf(ConnectorException.class)
-          .isNotInstanceOf(ConnectorRetryException.class)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable")
           .hasMessageContaining("not an OAuth token response")
           .hasMessageContaining("captive portal")
           .extracting(e -> ((ConnectorException) e).getErrorCode())
@@ -638,7 +639,7 @@ class KeyFlowTokenProviderTest {
 
       assertThatThrownBy(provider()::accessToken)
           .isInstanceOf(ConnectorException.class)
-          .isNotInstanceOf(ConnectorRetryException.class)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable")
           .hasMessageContaining("already expired")
           .hasMessageContaining("system clock of the connector runtime")
           .extracting(e -> ((ConnectorException) e).getErrorCode())

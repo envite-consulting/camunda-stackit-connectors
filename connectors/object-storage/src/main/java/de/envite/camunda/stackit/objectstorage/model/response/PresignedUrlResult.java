@@ -35,4 +35,26 @@ import java.time.Instant;
  *     verbatim; {@code null} when none was signed
  */
 public record PresignedUrlResult(
-    String url, Instant expiresAt, String method, String bucket, String key, String contentType) {}
+    String url, Instant expiresAt, String method, String bucket, String key, String contentType) {
+
+  /**
+   * Describes the result without the URL, whose query string holds the access key ID and the
+   * signature, so that the result can never leak through a log line.
+   *
+   * @return the result with the URL redacted
+   */
+  @Override
+  public String toString() {
+    return "PresignedUrlResult[url=***, expiresAt="
+        + expiresAt
+        + ", method="
+        + method
+        + ", bucket="
+        + bucket
+        + ", key="
+        + key
+        + ", contentType="
+        + contentType
+        + "]";
+  }
+}

@@ -798,6 +798,10 @@ class StackitObjectStorageExecutorTest {
           .isInstanceOf(ConnectorException.class)
           .extracting(failure -> ((ConnectorException) failure).getErrorCode())
           .isEqualTo(StackitErrorCodes.INVALID_INPUT);
+      assertThatThrownBy(
+              () -> UploadLimits.STACKIT.partSizeFor(UploadLimits.MAXIMUM_OBJECT_SIZE + 1))
+          .isInstanceOf(ConnectorException.class)
+          .hasMessageContaining("5 TiB");
     }
   }
 
@@ -823,6 +827,42 @@ class StackitObjectStorageExecutorTest {
                   response,
                   AbortableInputStream.create(
                       new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)))));
+    }
+
+    @Test
+    @DisplayName("aborts the connection when the stream is closed before its end")
+    void abortsAnUnfinishedDownload() throws Exception {
+      final java.util.concurrent.atomic.AtomicBoolean aborted =
+          new java.util.concurrent.atomic.AtomicBoolean();
+      final var stream =
+          new StackitObjectStorageExecutor.AbortOnEarlyClose(
+              new ResponseInputStream<>(
+                  GetObjectResponse.builder().build(),
+                  AbortableInputStream.create(
+                      new ByteArrayInputStream(new byte[64]), () -> aborted.set(true))));
+
+      stream.read(new byte[8]);
+      stream.close();
+
+      assertThat(aborted).isTrue();
+    }
+
+    @Test
+    @DisplayName("closes a fully read stream without aborting the connection")
+    void closesAFinishedDownload() throws Exception {
+      final java.util.concurrent.atomic.AtomicBoolean aborted =
+          new java.util.concurrent.atomic.AtomicBoolean();
+      final var stream =
+          new StackitObjectStorageExecutor.AbortOnEarlyClose(
+              new ResponseInputStream<>(
+                  GetObjectResponse.builder().build(),
+                  AbortableInputStream.create(
+                      new ByteArrayInputStream(new byte[64]), () -> aborted.set(true))));
+
+      stream.readAllBytes();
+      stream.close();
+
+      assertThat(aborted).isFalse();
     }
 
     @Test
@@ -1163,6 +1203,24 @@ class StackitObjectStorageExecutorTest {
     }
 
     @Test
+    @DisplayName("maps a network failure of the bucket check like any other failure")
+    void mapsANetworkFailureOfTheBucketCheck() {
+      when(s3Client.headObject(any(HeadObjectRequest.class)))
+          .thenThrow(NoSuchKeyException.builder().statusCode(404).message("Not Found").build());
+      when(s3Client.headBucket(any(HeadBucketRequest.class)))
+          .thenThrow(
+              software.amazon.awssdk.core.exception.SdkClientException.builder()
+                  .message("Unable to execute HTTP request")
+                  .cause(new java.net.ConnectException("Connection refused"))
+                  .build());
+
+      assertThatThrownBy(() -> executor.execute(new HeadObject(BUCKET, "missing", null), context))
+          .isInstanceOfSatisfying(
+              ConnectorException.class,
+              e -> assertThat(e.getErrorCode()).isEqualTo(StackitErrorCodes.CONNECTION_ERROR));
+    }
+
+    @Test
     @DisplayName("keeps exists: false when the bucket check itself is denied")
     void keepsTheObjectAnswerWhenTheBucketCheckIsDenied() {
       when(s3Client.headObject(any(HeadObjectRequest.class)))
@@ -1211,6 +1269,23 @@ class StackitObjectStorageExecutorTest {
                   BUCKET,
                   "a/b.pdf",
                   null));
+    }
+
+    @Test
+    @DisplayName("never shows the URL, which holds the access key ID, in toString")
+    void toStringRedactsTheUrl() {
+      final PresignedUrlResult result =
+          new PresignedUrlResult(
+              "https://object.storage.eu01.onstackit.cloud/b/k?X-Amz-Credential=AKID",
+              Instant.parse("2026-01-15T11:30:00Z"),
+              "GET",
+              BUCKET,
+              "k",
+              null);
+
+      assertThat(result.toString())
+          .doesNotContain("X-Amz", "AKID", "https://")
+          .contains("url=***", BUCKET);
     }
 
     @Test

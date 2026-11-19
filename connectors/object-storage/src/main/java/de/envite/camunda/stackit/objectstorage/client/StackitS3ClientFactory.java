@@ -130,11 +130,11 @@ public class StackitS3ClientFactory {
    *
    * <p><strong>The checksum workaround cannot be applied here.</strong> {@code S3Presigner.Builder}
    * exposes no {@code requestChecksumCalculation} or {@code responseChecksumValidation} — verified
-   * against AWS SDK 2.57.11, where {@code DefaultS3Presigner} contains no reference to either
-   * setting. A presigned URL therefore cannot carry {@code x-amz-sdk-checksum-algorithm} or {@code
-   * x-amz-trailer} in the first place; the only checksum knob the presigner has is the legacy
-   * {@code S3Configuration.checksumValidationEnabled}, which is set to {@code false} below both to
-   * be explicit and to avoid the warning the presigner logs when it is on.
+   * against AWS SDK 2.57.11 and 2.59.0, where {@code DefaultS3Presigner} contains no reference to
+   * either setting. A presigned URL therefore cannot carry {@code x-amz-sdk-checksum-algorithm} or
+   * {@code x-amz-trailer} in the first place; the only checksum knob the presigner has is the
+   * legacy {@code S3Configuration.checksumValidationEnabled}, which is set to {@code false} below
+   * both to be explicit and to avoid the warning the presigner logs when it is on.
    *
    * @param authentication the STACKIT access key to sign with; must not be {@code null}
    * @param configuration the endpoint and addressing settings; must not be {@code null}

@@ -17,6 +17,7 @@
 package de.envite.camunda.stackit.objectstorage.model.request;
 
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -24,7 +25,6 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.Optional;
@@ -55,7 +55,7 @@ public final class ObjectLocks {
 
   /** What the retain-until input accepts, for error messages and template descriptions. */
   public static final String RETAIN_UNTIL_FORMATS =
-      "an ISO-8601 period from now such as P30D, P1Y or PT12H, a date such as 2027-01-31"
+      "an ISO-8601 period from now such as P30D, P365D or PT12H, a date such as 2027-01-31"
           + " (midnight UTC at the start of that day), or a date-time with offset such as"
           + " 2027-01-31T12:00:00Z";
 
@@ -135,7 +135,7 @@ public final class ObjectLocks {
         return Optional.of(LocalDate.parse(value).atStartOfDay(ZoneOffset.UTC).toInstant());
       }
       return Optional.of(ZonedDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME).toInstant());
-    } catch (final DateTimeParseException | ArithmeticException e) {
+    } catch (final DateTimeException | ArithmeticException e) {
       return Optional.empty();
     }
   }

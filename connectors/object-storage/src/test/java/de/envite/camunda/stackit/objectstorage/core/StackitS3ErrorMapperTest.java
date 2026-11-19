@@ -18,6 +18,7 @@ package de.envite.camunda.stackit.objectstorage.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import io.camunda.connector.api.error.ConnectorException;
 import io.camunda.connector.api.error.ConnectorRetryException;
@@ -75,7 +76,8 @@ class StackitS3ErrorMapperTest {
       final RuntimeException mapped = StackitS3ErrorMapper.map(s3Exception(404, errorCode), ACTION);
 
       assertThat(mapped).isInstanceOf(ConnectorException.class);
-      assertThat(mapped).isNotInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.NOT_FOUND);
       assertThat(mapped)
           .hasMessageContaining(ACTION)
@@ -93,6 +95,20 @@ class StackitS3ErrorMapperTest {
 
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.ALREADY_EXISTS);
       assertThat(mapped).hasMessageContaining("globally unique across all STACKIT customers");
+    }
+
+    @ParameterizedTest(name = "HTTP 409 with code \"{0}\" maps to CONFLICT")
+    @ValueSource(strings = {"", "InvalidBucketState"})
+    @DisplayName("any other 409 is fatal and CONFLICT, not ALREADY_EXISTS")
+    void otherConflict(final String errorCode) {
+      final RuntimeException mapped = StackitS3ErrorMapper.map(s3Exception(409, errorCode), ACTION);
+
+      assertThat(mapped)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONFLICT);
+      assertThat(mapped)
+          .hasMessageContaining("conflicts with the current state")
+          .hasMessageNotContaining("globally unique");
     }
 
     @Test
@@ -132,7 +148,8 @@ class StackitS3ErrorMapperTest {
       final RuntimeException mapped =
           StackitS3ErrorMapper.map(s3Exception(501, "NotImplemented"), ACTION);
 
-      assertThat(mapped).isNotInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.SERVICE_UNAVAILABLE);
     }
 
@@ -152,6 +169,26 @@ class StackitS3ErrorMapperTest {
   @DisplayName("Retryable failures")
   class Retryable {
 
+    @Test
+    @DisplayName("OperationAborted is a retryable CONFLICT")
+    void operationAborted() {
+      final RuntimeException mapped =
+          StackitS3ErrorMapper.map(s3Exception(409, "OperationAborted"), ACTION);
+
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONFLICT);
+    }
+
+    @Test
+    @DisplayName("RequestTimeout is a retryable CONNECTION_ERROR, although it is an HTTP 400")
+    void requestTimeout() {
+      final RuntimeException mapped =
+          StackitS3ErrorMapper.map(s3Exception(400, "RequestTimeout"), ACTION);
+
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
+      assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
+    }
+
     @ParameterizedTest(name = "{0}/{1} is retried after {2}s")
     @CsvSource({
       "503, SlowDown, 5, RATE_LIMITED",
@@ -168,7 +205,7 @@ class StackitS3ErrorMapperTest {
       final RuntimeException mapped =
           StackitS3ErrorMapper.map(s3Exception(statusCode, errorCode), ACTION);
 
-      assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(expectedCode);
       assertThat(((ConnectorRetryException) mapped).getBackoffDuration())
           .isEqualTo(Duration.ofSeconds(backoffSeconds));
@@ -194,7 +231,7 @@ class StackitS3ErrorMapperTest {
 
       final RuntimeException mapped = StackitS3ErrorMapper.map(failure, ACTION);
 
-      assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
       assertThat(mapped)
           .hasMessageContaining("Could not reach STACKIT Object Storage")
@@ -214,7 +251,7 @@ class StackitS3ErrorMapperTest {
                   new IOException("read timed out")),
               ACTION);
 
-      assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
     }
 
@@ -225,7 +262,7 @@ class StackitS3ErrorMapperTest {
           StackitS3ErrorMapper.map(
               ApiCallAttemptTimeoutException.create(Duration.ofSeconds(30).toMillis()), ACTION);
 
-      assertThat(mapped).isInstanceOf(ConnectorRetryException.class);
+      assertThat(mapped).matches(StackitConnectorErrors::isRetryable, "is retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
     }
 
@@ -238,7 +275,7 @@ class StackitS3ErrorMapperTest {
 
       assertThat(mapped)
           .isInstanceOf(ConnectorException.class)
-          .isNotInstanceOf(ConnectorRetryException.class);
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.UNEXPECTED_ERROR);
       assertThat(mapped).hasMessageContaining("Unable to marshall request");
     }
@@ -266,7 +303,7 @@ class StackitS3ErrorMapperTest {
 
       assertThat(mapped)
           .isInstanceOf(ConnectorException.class)
-          .isNotInstanceOf(ConnectorRetryException.class);
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
       assertThat(errorCodeOf(mapped)).isEqualTo(StackitErrorCodes.INTEGRITY_CHECK_FAILED);
       assertThat(mapped)
           .hasMessageContaining("Nothing was stored")
@@ -312,7 +349,7 @@ class StackitS3ErrorMapperTest {
       assertThat(errorCodeOf(denied)).isEqualTo(StackitErrorCodes.ACCESS_DENIED);
       assertThat(missing).hasMessageNotContaining(hint);
       assertThat(transientFailure)
-          .isInstanceOf(ConnectorRetryException.class)
+          .matches(StackitConnectorErrors::isRetryable, "is retryable")
           .hasMessageNotContaining(hint);
     }
   }

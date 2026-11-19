@@ -53,7 +53,17 @@ class ObjectLocksTest {
   }
 
   @ParameterizedTest(name = "''{0}''")
-  @ValueSource(strings = {"tomorrow", "2027-01-31T12:00:00", "31.01.2027", "P", "-P1D", "PT0S"})
+  @ValueSource(
+      strings = {
+        "tomorrow",
+        "2027-01-31T12:00:00",
+        "31.01.2027",
+        "P",
+        "-P1D",
+        "PT0S",
+        "P999999999Y",
+        "PT9999999999999H"
+      })
   @DisplayName("retain-until refuses what it cannot parse or what is not in the future")
   void refusesUnusableRetainUntil(final String input) {
     assertThatThrownBy(() -> ObjectLocks.retainUntil(input, CLOCK))
