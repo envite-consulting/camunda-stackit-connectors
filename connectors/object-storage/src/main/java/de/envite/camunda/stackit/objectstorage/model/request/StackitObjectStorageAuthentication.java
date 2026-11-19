@@ -31,9 +31,10 @@ import jakarta.validation.constraints.NotBlank;
  * not store it in a retrievable form, so if it is lost the only remedy is to delete the access key
  * and create a new one.
  *
- * <p><strong>Every credential of a project can access every bucket of that project.</strong>
- * STACKIT Object Storage has no per-bucket policies and no ACLs, so an access key cannot be scoped
- * down to a single bucket. Separate data that must not share an access key into separate projects.
+ * <p><strong>By default every credential of a project can access every bucket of that
+ * project.</strong> An access key carries no bucket scope of its own and ACLs are read-only; only a
+ * bucket policy naming the credentials group narrows it. Data that must never share a credential
+ * belongs in separate projects.
  *
  * @param accessKey the access key id, for example {@code ABCDEFGHIJKLMNOPQRST}; must not be blank
  * @param secretAccessKey the secret access key; must not be blank

@@ -1,16 +1,14 @@
 # STACKIT Object Storage: S3 compatibility notes
 
-**What this is.** STACKIT Object Storage is a NetApp StorageGRID deployment behind an S3-compatible
-façade. That is not a detail — it determines which S3 operations exist, which request headers are
-accepted, and how an AWS SDK should be configured — including what its default checksums are
-actually worth here (measured: nothing; §2.7). This document records what was measured and what is documented, with sources, so
-that every connector in this repository configures its S3 client the same way and for stated
-reasons. **Read this before writing any code that talks to `object.storage.*.onstackit.cloud`** —
-in particular §2, which is the one thing that will break a default-configured AWS SDK for Java v2.
+STACKIT Object Storage is NetApp StorageGRID behind an S3-compatible façade. That decides which S3
+operations exist, which request headers are accepted, and how an AWS SDK has to be configured,
+including what its default checksums are worth here (measured: nothing, §2.7). This document
+records what was measured and what is documented, with sources. **Read it before writing code that
+talks to `object.storage.*.onstackit.cloud`**, §0 and §2 first.
 
-Facts that can drift are date-stamped. Direct measurements in this document were taken
-**2026-11-09** against the public endpoints, and **2026-11-10** with real credentials against
-`eu01` (§2.7).
+Facts that can drift are date-stamped. Measurements were taken against the public endpoints on
+**2026-11-09** and with real credentials against `eu01` on **2026-11-10** and **2026-11-16**
+(§2.7, §7.3). [`live-tests.md`](live-tests.md) describes how to repeat them.
 
 ---
 
@@ -21,7 +19,7 @@ has no checksum settings at all — see §10):
 
 | Setting | Required value | Why |
 | --- | --- | --- |
-| `requestChecksumCalculation` | `WHEN_REQUIRED` | SDK default `WHEN_SUPPORTED` sends a CRC32 `aws-chunked` trailer over headers StorageGRID 11.9/12.0 document as unsupported. Measured on `eu01`: accepted and stored intact, but the checksum is neither verified nor kept — it protects nothing (§2.7) |
+| `requestChecksumCalculation` | `WHEN_REQUIRED` | SDK default `WHEN_SUPPORTED` sends a CRC32 `aws-chunked` trailer over headers StorageGRID 11.9/12.0 document as unsupported. Measured on `eu01` and `eu02`: accepted and stored intact, but the checksum is neither verified nor kept — it protects nothing (§2.7) |
 | `responseChecksumValidation` | `WHEN_REQUIRED` | Avoids validating response checksums the backend may not return (§2) |
 | `endpointOverride` | `https://object.storage.<region>.onstackit.cloud` | No AWS endpoint resolution applies |
 | `region` | `eu01` / `eu02` | Not validated server-side, but keep it honest (§4) |
@@ -54,15 +52,16 @@ x-amz-request-id: 1794225696490289
 
 Error bodies additionally carry an `x-ntap-sg-trace-id` header (`ntap` = NetApp, `sg` = StorageGRID).
 
-| Region | Endpoint | StorageGRID version (2026-11-09) |
-| --- | --- | --- |
-| `eu01` | `object.storage.eu01.onstackit.cloud` | `11.9.0.14` |
-| `eu02` | `object.storage.eu02.onstackit.cloud` | `12.0.0.9` |
+| Region | Endpoint | StorageGRID 2026-11-09 | StorageGRID 2026-11-19 |
+| --- | --- | --- | --- |
+| `eu01` | `object.storage.eu01.onstackit.cloud` | `11.9.0.14` | `12.0.0.9` |
+| `eu02` | `object.storage.eu02.onstackit.cloud` | `12.0.0.9` | `12.0.0.9` |
 
-> **The two regions do not run the same version.** This is undocumented, it will change, and the
-> versions differ in observable behaviour (see §9.2 for a concrete case where eu02 exposes an API
-> that eu01 does not). Never branch on the `Server` header, and never assume a behaviour verified
-> in one region holds in the other. Verify per region.
+> **The version changes without notice.** `eu01` was upgraded from 11.9 to 12.0 between
+> 2026-11-09 and 2026-11-19; STACKIT announced nothing. While they differed, the two regions
+> behaved differently (§9.2 shows an API that eu02 exposed and eu01 did not). Never branch on the
+> `Server` header, and never assume a behaviour verified in one region, or at one time, still
+> holds. Re-run the live probes per region.
 
 ### 1.2 STACKIT's own OpenAPI specification
 
@@ -93,9 +92,9 @@ specification**, not Amazon's:
 
 ## 2. The checksum problem
 
-**This is the headline.** A default-configured AWS SDK for Java v2 ≥ 2.30.0 will send upload
-requests that StorageGRID 11.9 and 12.0 do not support. This repository pins AWS SDK v2
-`2.57.12` (`version.aws-sdk2` in the root `pom.xml`), so it is squarely affected.
+A default-configured AWS SDK for Java v2 ≥ 2.30.0 sends upload requests over headers that
+StorageGRID 11.9 and 12.0 document as unsupported. Every version this repository has pinned
+(`version.aws-sdk2` in the root `pom.xml`) is affected.
 
 ### 2.1 What the AWS SDK changed
 
@@ -146,7 +145,7 @@ the AWS SDK needs in order to send a trailer-based checksum (`x-amz-sdk-checksum
 
 CRC variants arrive only in **12.1**, which is deployed in neither STACKIT region. Even there,
 `x-amz-sdk-checksum-algorithm` and `x-amz-trailer` remain unsupported — so trailer-based checksums
-are never honoured, in any version. (Measured on `eu01`: such requests are accepted and the trailer
+are never honoured, in any version. (Measured on `eu01` and `eu02`: such requests are accepted and the trailer
 is discarded — §2.7.) 12.1 also notes: *"If a PutObject request doesn't specify a checksum,
 StorageGRID doesn't calculate a default CRC-64/NVME checksum for an object."*
 
@@ -229,13 +228,14 @@ remove one.
 
 ### 2.7 Measured: what STACKIT does with checksums
 
-Measured **2026-11-10** against `eu01` (StorageGRID 11.9.0.14) with AWS SDK for Java v2 2.57.12, by
-the opt-in live probe
+Measured **2026-11-10** against `eu01` (StorageGRID 11.9.0.14) with AWS SDK for Java v2 2.57.12,
+re-measured **2026-11-16** with 2.59.0, and on **2026-11-19** against `eu01` and `eu02` (both
+StorageGRID 12.0.0.9) with 2.59.0 — every time with identical results, by the opt-in live probe
 [`StorageGridChecksumProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/StorageGridChecksumProbeLiveIT.java).
 The probe records the checksum headers of every request *after signing*, so each row is backed by
 what actually went on the wire, and reads every object back.
 
-| Request (headers as sent) | STACKIT `eu01` |
+| Request (headers as sent) | STACKIT `eu01` and `eu02` |
 | --- | --- |
 | `PutObject`, SDK default: `content-encoding: aws-chunked`, `x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER`, `x-amz-sdk-checksum-algorithm: CRC32`, `x-amz-trailer: x-amz-checksum-crc32` — 43 B and 1 MiB (many chunks) | Accepted, stored **byte for byte**; ETag is the MD5 of the payload; **no checksum stored** |
 | `UploadPart` of a one-part multipart upload, same headers, 1 MiB; then `CompleteMultipartUpload` | Accepted and completed, stored intact; no checksum stored |
@@ -247,7 +247,7 @@ what actually went on the wire, and reads every object back.
 
 What this means:
 
-- **No corruption and no failure on `eu01`.** StorageGRID decodes `aws-chunked` bodies correctly
+- **No corruption and no failure in either region.** StorageGRID decodes `aws-chunked` bodies correctly
   and then **ignores the trailer**, whatever its algorithm — consistent with NetApp listing
   `x-amz-trailer` and `x-amz-sdk-checksum-algorithm` as unsupported (§2.2): "unsupported" turns out
   to mean "accepted and discarded", not "rejected". The silent-corruption scenario this section used
@@ -258,22 +258,23 @@ What this means:
   the upload starts.
 - **Why the connector still pins `WHEN_REQUIRED`:** the default buys nothing on STACKIT; it rests on
   headers the vendor documents as unsupported, so a StorageGRID upgrade may change the behaviour
-  without notice; and `eu02` (12.0) has not been measured. `WHEN_REQUIRED` sends a plain
+  without notice, as the unannounced 11.9 → 12.0 upgrade of `eu01` shows. `WHEN_REQUIRED` sends a plain
   `UNSIGNED-PAYLOAD` request whose behaviour is not in question.
 - **What integrity checking does exist:** TLS in transit; for single-part uploads without SSE-C an
   ETag that is the MD5 of the stored bytes (measured); and `x-amz-checksum-sha256` as a header,
   which STACKIT verifies before storing. The Object Storage connector uses the last one for every
   Camunda document: the document store has already recorded the SHA-256 of the content (its
-  `contentHash`), so the connector sends it as that header at no extra cost. Measured on `eu01`:
+  `contentHash`), so the connector sends it as that header at no extra cost. Measured on `eu01` and `eu02`:
   accepted with and without SSE-S3, and a document whose content no longer matches is refused
   with `BadDigest` and not stored.
 
 #### Multipart parts and Object Lock requests
 
-Measured **2026-11-16** against `eu01`, same SDK, by
+Measured **2026-11-16** against `eu01` with SDK 2.57.12 and again with 2.59.0, and on **2026-11-19**
+against `eu01` and `eu02` (StorageGRID 12.0.0.9) with identical results, by
 [`ObjectLockProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/ObjectLockProbeLiveIT.java):
 
-| Request (headers as sent) | STACKIT `eu01` |
+| Request (headers as sent) | STACKIT `eu01` and `eu02` |
 | --- | --- |
 | `UploadPart` with a wrong `Content-MD5` | **Rejected**: `400 BadDigest` |
 | `UploadPart` with `x-amz-checksum-sha256`, nothing declared on `CreateMultipartUpload` | **Rejected**: `400 InvalidRequest`, *"Checksum Type mismatch occurred, expected checksum Type: null, actual checksum Type: sha256"* — whether the value is right or wrong |
@@ -284,15 +285,15 @@ Measured **2026-11-16** against `eu01`, same SDK, by
 
 So a multipart upload **can** be verified part by part on STACKIT, but only if SHA-256 is
 declared on `CreateMultipartUpload` — this answers the earlier open question about a declared
-algorithm, for SHA-256 and `eu01`. The Object Storage connector uploads documents over 5 GiB, and
+algorithm, for SHA-256 in both regions. The Object Storage connector uploads documents over 5 GiB, and
 documents without a recorded checksum, that way: it computes each part's SHA-256 itself and sends
 it as a header, and compares the SHA-256 of the whole content with the document store's before
 completing.
 
-Not yet measured: `eu02`; CRC32 or another algorithm declared on `CreateMultipartUpload`, as the
+Not yet measured: CRC32 or another algorithm declared on `CreateMultipartUpload`, as the
 AWS CLI and the S3 Transfer Manager may send it; whether a corrupted *trailer* is noticed (by
 analogy with the CRC32 header, presumably not). Re-run both probes after every AWS SDK upgrade and in
-each region ([Testing against real STACKIT](../README.md#testing-against-real-stackit)).
+each region ([`live-tests.md`](live-tests.md)).
 
 ---
 
@@ -453,10 +454,9 @@ form. Maximum policy size is 20,480 bytes (§8).
 
 ## 7. Object Lock (WORM)
 
-Relevant to the planned [Archiving connector](../connectors/archiving/README.md), which proposes
-Object Lock as the implementable substitute for the STACKIT Archiving Service.
-
-Shipped **2026-04-02**; documentation last updated 2026-07-21.
+Both Object Storage connectors support Object Lock; the
+[Archiving design document](../connectors/archiving/README.md) compares it with the STACKIT
+Archiving Service. STACKIT shipped it on **2026-04-02**; documentation last updated 2026-07-21.
 
 | Concern | Behaviour |
 | --- | --- |
@@ -487,15 +487,8 @@ This split matters and is easy to get wrong.
 | Per-object legal hold | **S3 API** | `PutObjectLegalHold`, `GetObjectLegalHold` |
 | Bucket lock configuration | **S3 API** | `PutObjectLockConfiguration`, `GetObjectLockConfiguration` |
 
-The management-API half is already available in STACKIT's official Java SDK —
-`cloud.stackit.sdk:objectstorage:0.5.0` (latest release, published 2026-10-29; **not** a dependency
-of this repository) contains
-`RetentionMode`, `SetDefaultRetentionPayload`, `DefaultRetentionResponse`,
-`DeleteDefaultRetentionResponse` and `ComplianceLockResponse` in both its `v1api` and `v2api`
-packages, and `DefaultApi` exposes `createComplianceLock` / `getComplianceLock` /
-`deleteComplianceLock` / `setDefaultRetention` / `getDefaultRetention` / `deleteDefaultRetention`
-(verified 2026-11-09 by inspecting the published jar).
-
+The management connector calls the management-API half over plain HTTP. (STACKIT's Java SDK
+`cloud.stackit.sdk:objectstorage:0.5.0` covers the same endpoints; it is not a dependency.)
 Schemas, from
 [`object-storage/v2/object-storage.json`](https://github.com/stackitcloud/stackit-api-specifications/blob/main/services/object-storage/v2/object-storage.json):
 
@@ -519,18 +512,18 @@ retention periods of commonly 6 and 10 years. Object Lock compliance retention o
 Storage caps at **365 days**. These are **not equivalent** and must not be presented as such to a
 user with a statutory retention obligation.
 
-A connector can extend `COMPLIANCE` retention indefinitely in ≤365-day increments, but that turns
-a storage guarantee into an **operational** one: it holds only as long as something keeps renewing
-it, and a lapse is unrecoverable because an expired lock cannot be retroactively reinstated. Any
-documentation this repository ships must state that plainly.
+`COMPLIANCE` retention can be extended indefinitely in ≤365-day steps, but that turns a storage
+guarantee into an **operational** one: it holds only as long as something keeps renewing it, and a
+lapse is unrecoverable because an expired lock cannot be reinstated.
 
 ### 7.3 Measured: Object Lock through the S3 API
 
-Measured **2026-11-16** against `eu01`, in a project **without** the compliance lock, by
+Measured **2026-11-16** against `eu01` and on **2026-11-19** against `eu01` and `eu02` with identical
+results, in a project **without** the compliance lock, by
 [`ObjectLockProbeLiveIT`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/live/ObjectLockProbeLiveIT.java)
 and exercised end to end by `ObjectLockLiveIT`:
 
-| Request | STACKIT `eu01` |
+| Request | STACKIT `eu01` and `eu02` |
 | --- | --- |
 | S3 `CreateBucket` with `x-amz-bucket-object-lock-enabled: true`, access-key credentials | Accepted; Object Lock `Enabled`, versioning `Enabled`, no default rule. The bucket can be deleted again once empty |
 | `PutObject` with Object Lock headers and **no** checksum | **Rejected**: `400 InvalidRequest`, *"Content-MD5 OR x-amz-checksum- HTTP header is required for Put Object requests with Object Lock parameters"* |
@@ -643,7 +636,7 @@ credentials group, enforced by bucket policy (§6).
 
 ### 9.2 STS: present in eu02, absent in eu01 — do not design around it
 
-This correctly belongs under "surprising". Measured 2026-11-09 by POSTing an
+Measured 2026-11-09 by POSTing an
 `Action=AssumeRole` form to the S3 host of each region, unauthenticated:
 
 | Region | Response |
@@ -692,8 +685,8 @@ Supported and documented for both read and write
   treat that as the hard upper bound and default to something much shorter.
 
 > **Presigned URLs carry no checksum parameters — keep it that way.** `S3Presigner.Builder` has no
-> `requestChecksumCalculation` or `responseChecksumValidation` setting (verified 2026-11-10 against
-> AWS SDK 2.57.11 and 2.57.12 by inspecting the published `s3` jar), and a presigned `PUT` signs
+> `requestChecksumCalculation` or `responseChecksumValidation` setting (verified by inspecting the
+> published `s3` jar for 2.57.11 and 2.57.12 on 2026-11-10, and 2.59.0 on 2026-11-16), and a presigned `PUT` signs
 > neither `x-amz-sdk-checksum-algorithm` nor `x-amz-trailer`. The `PresignedUpload` case of
 > [`ChecksumHeaderRegressionTest`](../connectors/object-storage/src/test/java/de/envite/camunda/stackit/objectstorage/client/ChecksumHeaderRegressionTest.java)
 > pins this. Re-check it on every AWS SDK upgrade: a presigner that signed a checksum header into
@@ -716,7 +709,7 @@ states:
 > "Any tool, SDK, or library that supports S3, including the AWS CLI, boto3, and s5cmd, works with
 > STACKIT Object Storage […] without modification."
 
-**That claim is incomplete.** Measured on `eu01`, a default-configured AWS SDK for Java v2 does
+**That claim is incomplete.** Measured on `eu01` and `eu02`, a default-configured AWS SDK for Java v2 does
 upload and download correctly (§2.7). But at default settings it sends a CRC32 `aws-chunked` trailer
 over headers that StorageGRID 11.9 and 12.0 document as unsupported (§2.2), STACKIT silently
 discards that checksum, NetApp's own knowledge base reports failures for related request shapes
@@ -741,16 +734,17 @@ Summary of documentation defects found:
 
 Nothing below has been settled. None of it should be treated as fact.
 
-1. **Checksum behaviour in `eu02` (§2.7).** Measured in `eu01` only (2026-11-10): default SDK
-   checksums are accepted and discarded, no corruption. `eu02` runs StorageGRID 12.0 and needs its
-   own run of `StorageGridChecksumProbeLiveIT`.
+1. **Checksum behaviour after the next StorageGRID upgrade (§2.7).** Settled for 11.9 and 12.0 in
+   both regions: default SDK checksums are accepted and discarded, no corruption. Re-run
+   `StorageGridChecksumProbeLiveIT` whenever the `Server` header changes.
 2. **`x-amz-security-token` (§9.2).** Could not be reproduced as `XNotImplemented`; unauthenticated
    probes return `InvalidAccessKeyId` on both regions. Needs a real credential to resolve.
 3. **STS in eu02 (§9.2).** An `AssumeRole` dispatcher demonstrably exists and Lakekeeper uses it,
    but it is wholly undocumented by STACKIT and absent from eu01. Is it supported? Will it appear
    in eu01 on upgrade? Does setting a credentials-group trust policy require Support?
-4. **Region feature skew generally (§1.1).** eu01 is 11.9, eu02 is 12.0, and they differ at least on
-   STS. What else differs? There is no STACKIT changelog for the backing platform. The only safe
+4. **Region feature skew generally (§1.1).** eu01 ran 11.9 and eu02 12.0 until eu01 was upgraded
+   between 2026-11-09 and 2026-11-19; while they differed, they differed at least on STS (not re-probed
+   since). What else differs? There is no STACKIT changelog for the backing platform. The only safe
    assumption is that any region-specific behaviour must be verified per region.
 5. **Inferred unsupported operations (§5.2).** Derived from absence from a list that never claims
    completeness. Each row should be probed against a live tenant before being documented to users —
@@ -767,14 +761,14 @@ Nothing below has been settled. None of it should be treated as fact.
 10. **Multipart with a declared checksum algorithm.** Answered for SHA-256 on `eu01` (§2.7): when
     declared on `CreateMultipartUpload`, every part's SHA-256 is verified; undeclared, a part
     checksum is refused. Still open: other algorithms, which the AWS CLI and the S3 Transfer
-    Manager may declare — the likely subject of the NetApp KBs in §2.4 — and `eu02`.
-13. **Object Lock in `eu02`, and `COMPLIANCE` without the project compliance lock (§7.3).**
-    Measured on `eu01` with `GOVERNANCE` only.
+    Manager may declare — the likely subject of the NetApp KBs in §2.4.
 11. **`SelectObjectContent` and `RestoreObject`.** Listed as supported, but STACKIT offers no
     archive tier, so `RestoreObject` may be a no-op. Neither is exercised by any planned connector.
 12. **Does STACKIT enforce the 2,500 req/s and 500 concurrent-request limits with `503 SlowDown`,**
     or by connection refusal? Determines whether the connector needs its own retry/backoff policy
     beyond the SDK default.
+13. **`COMPLIANCE` without the project compliance lock (§7.3).** Object Lock is measured in both
+    regions with `GOVERNANCE` only.
 
 ---
 

@@ -103,7 +103,7 @@
   }, {
     "id" : "configuration.endpoint",
     "label" : "Custom endpoint",
-    "description" : "Optional. Replaces the regional STACKIT endpoint (https://object.storage.<region>.onstackit.cloud) with another S3-compatible endpoint, for example http://localhost:9000 for a local MinIO used in testing, or a new STACKIT region this connector version does not list yet. Leave empty for normal use.",
+    "description" : "Optional. Replaces the regional STACKIT endpoint (https://object.storage.&lt;region&gt;.onstackit.cloud) with another S3-compatible endpoint, for example http://localhost:9000 for a local MinIO used in testing, or a new STACKIT region this connector version does not list yet. Leave empty for normal use.",
     "optional" : true,
     "feel" : "optional",
     "group" : "configuration",
@@ -116,7 +116,7 @@
   }, {
     "id" : "configuration.pathStyleAccess",
     "label" : "Use path-style access",
-    "description" : "Addresses buckets as <endpoint>/<bucket>/<key> instead of <bucket>.<endpoint>/<key>. Enabled by default: STACKIT serves both styles, but the wildcard TLS certificate covers only one host label, so a bucket name containing a dot breaks virtual-hosted-style TLS. Turn it off only if a custom endpoint requires virtual-hosted-style addressing.",
+    "description" : "Addresses buckets as &lt;endpoint&gt;/&lt;bucket&gt;/&lt;key&gt; instead of &lt;bucket&gt;.&lt;endpoint&gt;/&lt;key&gt;. Enabled by default: STACKIT serves both styles, but the wildcard TLS certificate covers only one host label, so a bucket name containing a dot breaks virtual-hosted-style TLS. Turn it off only if a custom endpoint requires virtual-hosted-style addressing.",
     "optional" : true,
     "value" : true,
     "feel" : "static",
@@ -483,7 +483,7 @@
   }, {
     "id" : "uploadObjectRetainUntil",
     "label" : "Retain until",
-    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P1Y or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
+    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P365D or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
     "optional" : true,
     "feel" : "optional",
     "group" : "operation",
@@ -1218,7 +1218,7 @@
   }, {
     "id" : "setObjectRetentionRetainUntil",
     "label" : "Retain until",
-    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P1Y or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
+    "description" : "When the retention ends: an ISO-8601 period from now such as P30D, P365D or PT12H, a date such as 2027-01-31 (midnight UTC at the start of that day), or a date-time with offset such as 2027-01-31T12:00:00Z. At most 365 days ahead on STACKIT.",
     "optional" : false,
     "constraints" : {
       "notEmpty" : true

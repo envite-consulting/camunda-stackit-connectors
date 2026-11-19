@@ -39,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import de.envite.camunda.stackit.objectstorage.management.model.response.ManagementResponses;
 import io.camunda.connector.api.error.ConnectorException;
@@ -561,7 +562,7 @@ class StackitObjectStorageManagementConnectorFunctionTest {
           failingListBuckets(status, "{\"detail\":[{\"key\":\"k\",\"msg\":\"m\"}]}");
 
       assertThat(error.getErrorCode()).isEqualTo(code);
-      assertThat(error instanceof ConnectorRetryException).isEqualTo(retryable);
+      assertThat(StackitConnectorErrors.isRetryable(error)).isEqualTo(retryable);
       assertThat(error.getMessage()).contains("HTTP " + status).doesNotContain(TOKEN);
     }
 
@@ -679,7 +680,7 @@ class StackitObjectStorageManagementConnectorFunctionTest {
                               + "\",\"region\":\"EU01\"},\"operationType\":\"listBuckets\"}")
                       .build()));
 
-      assertThat(error).isInstanceOf(ConnectorRetryException.class);
+      assertThat(error).matches(StackitConnectorErrors::isRetryable, "is retryable");
       assertThat(error.getErrorCode()).isEqualTo(StackitErrorCodes.CONNECTION_ERROR);
     }
   }

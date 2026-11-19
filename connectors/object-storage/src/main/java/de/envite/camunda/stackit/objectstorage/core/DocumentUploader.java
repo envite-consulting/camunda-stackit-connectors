@@ -74,8 +74,9 @@ import software.amazon.awssdk.services.s3.model.UploadPartRequest;
  * with {@code BadDigest} when {@code CreateMultipartUpload} declares SHA-256, and with {@code
  * InvalidRequest} when it does not - see the compatibility notes, §2.7.
  *
- * <p>Memory: at most one part is held at a time - 16 MiB for any document up to 156 GiB, rising to
- * {@code size / 10000} beyond that. Parts are sent one after another, not in parallel.
+ * <p>Memory: one part is read at a time - 16 MiB for any document up to 156 GiB, rising to {@code
+ * size / 10000} beyond that - and {@code RequestBody.fromBytes} copies it, so a job holds about
+ * twice the part size while a part is sent. Parts are sent one after another, not in parallel.
  */
 final class DocumentUploader {
 

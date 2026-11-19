@@ -28,13 +28,19 @@ import java.util.Objects;
  * right is what decides whether a process instance recovers on its own:
  *
  * <ul>
- *   <li>{@link ConnectorException} — <em>fatal</em>. The job fails immediately, the error
- *       expression of the service task is evaluated, and the error code of the exception is what a
- *       BPMN error expression sees as {@code error.code}. Use it for everything a retry cannot fix:
- *       bad credentials, a missing bucket, invalid inputs.
- *   <li>{@link ConnectorRetryException} — <em>transient</em>. The job is retried after a backoff.
- *       Use it for rate limits, server-side failures and network glitches.
+ *   <li><em>Fatal</em> ({@link #fatal}): for everything a retry cannot fix - bad credentials, a
+ *       missing bucket, invalid inputs. The job fails with no retries left, so it becomes an
+ *       incident at once. Note that a plain {@link ConnectorException} would <em>not</em> do that:
+ *       the 8.10 runtime retries it with the retry count of the service task, and stops early only
+ *       for a {@code ConnectorInputException}, which carries no error code. A fatal failure is
+ *       therefore a {@link ConnectorRetryException} with zero retries.
+ *   <li><em>Transient</em> ({@link #retryable}): for rate limits, server-side failures and network
+ *       glitches. The job is retried after a backoff, counting down the task's retries.
  * </ul>
+ *
+ * <p>Either way the error expression of the service task is evaluated first, and the error code is
+ * what it sees as {@code error.code}. Use {@link #isRetryable(Throwable)} to tell the two apart;
+ * the exception type alone does not.
  *
  * <p>Use {@link #isRetryableHttpStatus(int)} to decide between the two and {@link
  * #errorCodeForHttpStatus(int)} to pick the error code, so that every STACKIT connector classifies
@@ -49,8 +55,8 @@ public final class StackitConnectorErrors {
   }
 
   /**
-   * Creates a fatal connector failure: the job fails and the BPMN error expression of the service
-   * task is evaluated with {@code error.code} set to {@code errorCode}.
+   * Creates a fatal connector failure: the BPMN error expression of the service task is evaluated
+   * with {@code error.code} set to {@code errorCode}, and otherwise the job fails without retries.
    *
    * @param errorCode one of the constants in {@link StackitErrorCodes}; must not be {@code null}
    * @param message a message aimed at whoever operates the process, explaining what failed and what
@@ -59,9 +65,7 @@ public final class StackitConnectorErrors {
    * @throws NullPointerException if {@code errorCode} or {@code message} is {@code null}
    */
   public static ConnectorException fatal(final String errorCode, final String message) {
-    Objects.requireNonNull(errorCode, "errorCode must not be null");
-    Objects.requireNonNull(message, "message must not be null");
-    return new ConnectorException(errorCode, message);
+    return fatal(errorCode, message, null);
   }
 
   /**
@@ -79,7 +83,25 @@ public final class StackitConnectorErrors {
       final String errorCode, final String message, final Throwable cause) {
     Objects.requireNonNull(errorCode, "errorCode must not be null");
     Objects.requireNonNull(message, "message must not be null");
-    return new ConnectorException(errorCode, message, cause);
+    return ConnectorRetryException.builder()
+        .errorCode(errorCode)
+        .message(message)
+        .cause(cause)
+        .retries(0)
+        .build();
+  }
+
+  /**
+   * Whether the runtime will retry the job after {@code failure}.
+   *
+   * @param failure the failure to classify; may be {@code null}
+   * @return {@code true} for a {@link #retryable} failure, which leaves the retry count to the
+   *     service task; {@code false} for a {@link #fatal} one, for {@code null}, and for any
+   *     exception not created by this class
+   */
+  public static boolean isRetryable(final Throwable failure) {
+    return failure instanceof final ConnectorRetryException retry
+        && (retry.getRetries() == null || retry.getRetries() > 0);
   }
 
   /**

@@ -45,7 +45,11 @@ public record ManagementConfiguration(
                     + " <code>stackit project list</code>.",
             constraints = @TemplateProperty.PropertyConstraints(notEmpty = true))
         @NotBlank(message = "A STACKIT project ID is required")
-        @Pattern(regexp = ManagementConfiguration.UUID_PATTERN, message = "must be a UUID")
+        @Pattern(
+            regexp = ManagementConfiguration.PROJECT_ID_PATTERN,
+            message =
+                "must be a UUID, a FEEL expression (=projectId) or a secret reference"
+                    + " ({{secrets.STACKIT_PROJECT_ID}})")
         String projectId,
     @TemplateProperty(
             label = "Region",
@@ -66,9 +70,18 @@ public record ManagementConfiguration(
                     + " access token to it. Leave empty for normal use.")
         String endpoint) {
 
-  /** A UUID in its canonical 8-4-4-4-12 hex form, any case. */
-  public static final String UUID_PATTERN =
-      "^\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\s*$";
+  /**
+   * The modelling-time project ID rule: a UUID in its canonical 8-4-4-4-12 hex form, or a FEEL
+   * expression ({@code =...}), or a secret reference ({@code {{secrets.NAME}}}).
+   *
+   * <p>The generator copies this pattern into the element template, where Modeler checks it against
+   * the literal text of the field, so it has to admit an expression or a secret reference - the
+   * same reasoning as {@code BucketNames.LENIENT_PATTERN}. The strict UUID check runs at runtime,
+   * on the evaluated value, in {@code ObjectStorageManagementExecutor}.
+   */
+  public static final String PROJECT_ID_PATTERN =
+      "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}"
+          + "|\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\s*)$";
 
   /**
    * Whether a custom endpoint was configured.

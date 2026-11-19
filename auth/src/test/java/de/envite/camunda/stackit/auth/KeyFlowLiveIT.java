@@ -22,9 +22,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.envite.camunda.stackit.core.StackitEndpoints;
+import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
 import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import io.camunda.connector.api.error.ConnectorException;
-import io.camunda.connector.api.error.ConnectorRetryException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -193,7 +193,7 @@ class KeyFlowLiveIT {
 
     assertThatThrownBy(provider::accessToken)
         .isInstanceOf(ConnectorException.class)
-        .isNotInstanceOf(ConnectorRetryException.class)
+        .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable")
         .extracting(e -> ((ConnectorException) e).getErrorCode())
         .isEqualTo(StackitErrorCodes.AUTHENTICATION_FAILED);
     assertThat(client.sentRequests())

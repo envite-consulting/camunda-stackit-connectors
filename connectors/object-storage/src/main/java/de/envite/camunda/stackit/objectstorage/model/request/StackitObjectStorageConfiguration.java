@@ -55,7 +55,7 @@ public record StackitObjectStorageConfiguration(
             optional = true,
             description =
                 "Optional. Replaces the regional STACKIT endpoint"
-                    + " (https://object.storage.<region>.onstackit.cloud) with another"
+                    + " (https://object.storage.&lt;region&gt;.onstackit.cloud) with another"
                     + " S3-compatible endpoint, for example http://localhost:9000 for a local"
                     + " MinIO used in testing, or a new STACKIT region this connector version does"
                     + " not list yet. Leave empty for normal use.",
@@ -82,8 +82,8 @@ public record StackitObjectStorageConfiguration(
             defaultValue = "true",
             defaultValueType = DefaultValueType.Boolean,
             description =
-                "Addresses buckets as <endpoint>/<bucket>/<key> instead of"
-                    + " <bucket>.<endpoint>/<key>. Enabled by default: STACKIT serves both styles,"
+                "Addresses buckets as &lt;endpoint&gt;/&lt;bucket&gt;/&lt;key&gt; instead of"
+                    + " &lt;bucket&gt;.&lt;endpoint&gt;/&lt;key&gt;. Enabled by default: STACKIT serves both styles,"
                     + " but the wildcard TLS certificate covers only one host label, so a bucket"
                     + " name containing a dot breaks virtual-hosted-style TLS. Turn it off only if"
                     + " a custom endpoint requires virtual-hosted-style addressing.")

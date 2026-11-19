@@ -1,21 +1,24 @@
-# Manual release of camunda-stackit-connectors to Maven Central via the
+# Manual release of camunda-stackit-connectors: a GitHub Release with the
+# shaded jars and element templates, and optionally Maven Central via the
 # Sonatype Central Portal.
 #
 # What a run does, in order:
 #   1. Refuses anything but `main` and anything that is not a release version.
 #   2. Commits the release version to every pom and tags that commit `v<version>`,
 #      so the tag always builds exactly what was released.
-#   3. Builds, tests (including the Floci integration tests), signs and uploads
-#      to the Central Portal in a single Maven run. autoPublish=false: the
-#      deployment then waits at https://central.sonatype.com/publishing/deployments
-#      for a human to press "Publish".
+#   3. Builds and tests (including the Floci integration tests). With
+#      publish_to_maven_central, the same Maven run also signs and uploads to
+#      the Central Portal. autoPublish=false: the deployment then waits at
+#      https://central.sonatype.com/publishing/deployments for a human to press
+#      "Publish".
 #   4. Pushes the tag, creates the GitHub Release with the shaded jars and the
 #      element templates attached.
 #   5. Commits the next -SNAPSHOT version and pushes the release commit and that
 #      commit to main. If main moved during the run, this last push is refused;
 #      the release itself is unaffected and the warning says what to do.
 #
-# REQUIRED SECRETS - NONE OF THESE ARE CONFIGURED YET. Create a GitHub
+# SECRETS FOR publish_to_maven_central - NONE OF THESE ARE CONFIGURED YET, so
+# leave that input off until they are. Create a GitHub
 # environment named `maven-central` (Settings > Environments) and add them there,
 # not as repository secrets: an environment can require a reviewer to approve
 # every release before the secrets are released to the job.
@@ -50,6 +53,13 @@ on:
           patch version (0.1.0 -> 0.1.1-SNAPSHOT; 1.0.0-rc1 -> 1.0.0-SNAPSHOT).
         required: false
         type: string
+      publish_to_maven_central:
+        description: >-
+          Also sign and upload to Maven Central. Needs the secrets listed at the
+          top of this file in the maven-central environment.
+        required: false
+        type: boolean
+        default: false
       draft_release:
         description: >-
           Create the GitHub Release as a draft. Default true, to match
@@ -81,6 +91,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       NEXT_VERSION_INPUT: ${{ inputs.next_version }}
+      PUBLISH_TO_MAVEN_CENTRAL: ${{ inputs.publish_to_maven_central }}
     steps:
       - name: Validate version input
         shell: bash
@@ -147,11 +158,16 @@ jobs:
       # not been through the same gate as a pull request. -Prelease adds sources,
       # javadoc, GPG signatures and the Central publishing extension.
       - name: Build, test, sign and upload to the Central Portal
+        if: inputs.publish_to_maven_central
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: ./mvnw -B -ntp -P'!autoFormat' -Prelease deploy
+
+      - name: Build and test
+        if: ${{ !inputs.publish_to_maven_central }}
+        run: ./mvnw -B -ntp -P'!autoFormat' verify
 
       # Self-Managed and Camunda 8 Run users install element templates by
       # dropping the raw JSON into their Modeler resources directory, and the
@@ -201,6 +217,23 @@ jobs:
 
           ls -la release-assets release-assets/element-templates
 
+          {
+            if [[ "$PUBLISH_TO_MAVEN_CENTRAL" == "true" ]]; then
+              printf '## Maven Central\n\n```xml\n<dependency>\n  <groupId>de.envite.camunda.stackit</groupId>\n  <artifactId>stackit-connector-object-storage</artifactId>\n  <version>%s</version>\n</dependency>\n```\n\n' "$RELEASE_VERSION"
+            fi
+            cat <<NOTES
+          ## Installation
+
+          1. Mount \`stackit-connector-object-storage-$RELEASE_VERSION-with-dependencies.jar\`
+             into your Connector Runtime - \`camunda/connectors-bundle\`, Camunda 8 Run, or a
+             runtime attached to Camunda SaaS in hybrid mode. Camunda does not host third-party
+             connector code. See the [README](https://github.com/$GITHUB_REPOSITORY/blob/v$RELEASE_VERSION/README.md#getting-started).
+          2. Install the element templates attached below (or
+             \`element-templates-$RELEASE_VERSION.zip\`) in Desktop Modeler or Web Modeler. The
+             Camunda Marketplace serves only the latest version; these assets pin this one.
+          NOTES
+          } > release-assets/release-notes.md
+
       - name: Push the release tag
         shell: bash
         env:
@@ -218,33 +251,11 @@ jobs:
           draft: ${{ inputs.draft_release }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+          body_path: release-assets/release-notes.md
           files: |
             release-assets/*.jar
             release-assets/*.zip
             release-assets/element-templates/*.json
-          body: |
-            ## Maven Central
-
-            ```xml
-            <dependency>
-              <groupId>de.envite.camunda.stackit</groupId>
-              <artifactId>stackit-connector-object-storage</artifactId>
-              <version>${{ inputs.version }}</version>
-            </dependency>
-            ```
-
-            ## Element templates
-
-            Camunda 8 SaaS users can install the connectors from the Camunda
-            Marketplace. Self-Managed and Camunda 8 Run users should download
-            the element template JSON files attached below (or
-            `element-templates-${{ inputs.version }}.zip`) and place them in
-            their Modeler `resources/element-templates` directory. The
-            Marketplace only ever serves the latest version, so these assets are
-            the only way to pin an older template.
-
-            The `*-with-dependencies.jar` assets are the shaded runtime jars to
-            mount into `camunda/connectors-bundle`.
 
       - name: Continue main on the next development version
         shell: bash
@@ -259,6 +270,6 @@ jobs:
           fi
 
       - name: Remind about the manual publish step
-        if: success()
+        if: success() && inputs.publish_to_maven_central
         run: |
           echo "::notice title=Deployment staged::autoPublish=false - open https://central.sonatype.com/publishing/deployments and publish the staged deployment, then un-draft the GitHub Release if it was created as a draft."

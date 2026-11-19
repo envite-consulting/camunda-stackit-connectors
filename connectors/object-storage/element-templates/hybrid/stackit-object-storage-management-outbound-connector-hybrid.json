@@ -134,8 +134,8 @@
     "constraints" : {
       "notEmpty" : true,
       "pattern" : {
-        "value" : "^\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\s*$",
-        "message" : "must be a UUID"
+        "value" : "^(=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}}|\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\s*)$",
+        "message" : "must be a UUID, a FEEL expression (=projectId) or a secret reference ({{secrets.STACKIT_PROJECT_ID}})"
       }
     },
     "feel" : "optional",

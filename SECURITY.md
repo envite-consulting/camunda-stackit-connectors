@@ -5,8 +5,7 @@
 **Please do not open a public GitHub issue for a security vulnerability.**
 
 Report it privately through
-[GitHub's private vulnerability reporting](https://github.com/envite-consulting/camunda-stackit-connectors/security/advisories/new),
-or by email to **security@envite.de** with `camunda-stackit-connectors` in the subject.
+[GitHub's private vulnerability reporting](https://github.com/envite-consulting/camunda-stackit-connectors/security/advisories/new).
 
 Please include the affected connector and version, the Camunda version and deployment type,
 a description of the impact, and the steps to reproduce. If you have a proof of concept,
@@ -39,8 +38,9 @@ which apply to connectors listed on the Marketplace. They are best-effort commit
 What we commit to, and what you should verify in a review:
 
 - **All traffic is TLS.** STACKIT endpoints are HTTPS only; the connectors never downgrade.
-- **Credentials are never persisted.** A connector receives credentials per job invocation
-  and holds them only for that invocation. Nothing is written outside your Camunda cluster.
+- **Credentials are never persisted.** A connector receives credentials with each job. The only
+  state kept between jobs is the management connector's in-memory access-token cache, keyed by a
+  fingerprint of the service account key. Nothing is written outside your Camunda cluster.
 - **Credentials are never logged.** Every model holding a credential redacts it in
   `toString()`, and error messages name the bucket, key or endpoint rather than the key
   material. If you ever find a credential in a log line or a Camunda incident message, that
@@ -76,10 +76,10 @@ Two things that catch people out:
 ## Scoping STACKIT credentials
 
 STACKIT Object Storage access keys are **project-scoped, not bucket-scoped**: by default
-every credential in a project can read and write every bucket in that project. Credentials
-groups — or separate STACKIT projects — are the only isolation mechanism. Give a process its
-own credentials group, and remember that an access key's secret is shown only once, at
-creation.
+every credential in a project can read and write every bucket in that project. Isolate with a
+bucket policy per credentials group, or with separate STACKIT projects. An access key's secret is
+shown only once, at creation; the management connector's *Create access key* returns it into a
+process variable, so keep it out of long-lived variables.
 
 See
 [STACKIT's credentials documentation](https://docs.stackit.cloud/products/storage/object-storage/how-tos/create-and-delete-object-storage-credentials/).

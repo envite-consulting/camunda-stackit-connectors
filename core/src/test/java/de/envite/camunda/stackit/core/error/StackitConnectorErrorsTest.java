@@ -134,7 +134,33 @@ class StackitConnectorErrorsTest {
       assertThat(exception.getErrorCode()).isEqualTo("NOT_FOUND");
       assertThat(exception.getMessage()).isEqualTo("Bucket 'invoices' not found");
       assertThat(exception.getCause()).isNull();
-      assertThat(exception).isNotInstanceOf(ConnectorRetryException.class);
+      assertThat(exception)
+          .matches(failure -> !StackitConnectorErrors.isRetryable(failure), "is not retryable");
+    }
+
+    @Test
+    void leavesNoRetriesSoTheRuntimeRaisesAnIncidentAtOnce() {
+      // The 8.10 runtime retries a plain ConnectorException with the task's retry count; only an
+      // explicit zero stops it while keeping the error code for the error expression.
+      final ConnectorException exception =
+          StackitConnectorErrors.fatal(StackitErrorCodes.AUTHENTICATION_FAILED, "bad key");
+
+      assertThat(exception)
+          .isInstanceOfSatisfying(
+              ConnectorRetryException.class, retry -> assertThat(retry.getRetries()).isZero());
+      assertThat(StackitConnectorErrors.isRetryable(exception)).isFalse();
+    }
+
+    @Test
+    void tellsRetryableFromFatal() {
+      assertThat(
+              StackitConnectorErrors.isRetryable(
+                  StackitConnectorErrors.retryable(
+                      StackitErrorCodes.RATE_LIMITED, "slow down", null, Duration.ofSeconds(5))))
+          .isTrue();
+      assertThat(StackitConnectorErrors.isRetryable(new ConnectorException("X", "plain")))
+          .isFalse();
+      assertThat(StackitConnectorErrors.isRetryable(null)).isFalse();
     }
 
     @Test

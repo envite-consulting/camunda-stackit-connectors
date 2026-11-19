@@ -1,405 +1,184 @@
 # STACKIT Archiving connector — design notes
 
-> ## Status: design document. Not an implemented connector.
->
-> This directory contains **no `pom.xml` and no Java**, deliberately. Publishing an empty module
-> would put a do-nothing artifact on Maven Central under this repository's coordinates. A module
-> will be added when the blocking questions in §6 are answered.
->
-> Research verified **2026-11-09**.
+> **Status: design document, not a connector.** This directory deliberately has no `pom.xml`: an
+> empty module would publish a do-nothing artifact to Maven Central. Research verified
+> **2026-11-09** unless stated otherwise.
 
-**What this is.** An assessment of whether a Camunda 8 connector for the STACKIT Archiving Service
-can be built, what it would do, and what currently prevents it. The short answer: the service is
-real and useful, but it has **no usable public API**, so the connector cannot be built as such
-today. §4 sets out what *can* be built now — audit-proof retention on STACKIT Object Storage using
-Object Lock — and is explicit about where that falls short of the Archiving Service. **Read this
-before starting work on an archiving connector**; the API-situation section exists so nobody
-repeats the search.
-
-> **Update 2026-11-16: the §4 path is implemented.** The [Object Storage connector](../object-storage/README.md#object-lock)
-> uploads with Object Lock retention and legal hold, and sets and extends them later. The
-> [Management connector](../object-storage/README.md#management-connector) creates Object Lock
-> buckets, the project compliance lock and a bucket's default retention. The 365-day ceiling
-> described in §4 still applies.
+**Summary.** The [STACKIT Archiving Service](https://stackit.com/en/products/storage/stackit-archiving-service)
+is real and useful, but it has **no usable public API**, so a connector for it cannot be built
+today (§2, §3). What *can* be built — WORM retention with Object Lock on STACKIT Object Storage — is
+**already shipped** in the Object Storage connectors (§4), with a 365-day ceiling that makes it no
+substitute for a 6- or 10-year statutory retention (§4.1). Read §2 before searching for an API again.
 
 ---
 
 ## 1. What the service is
 
-[STACKIT Archiving Service](https://stackit.com/en/products/storage/stackit-archiving-service) is
-**audit-proof (revisionssicher) archiving for data from SAP and non-SAP systems**. Once written,
-data cannot be changed or deleted. There is no post-processing and no indexing of archived data.
+Audit-proof (*revisionssicher*) archiving for data from SAP and non-SAP systems. Once written, data
+cannot be changed or deleted, and nothing is indexed.
 
 | Property | Detail | Source |
 | --- | --- | --- |
-| Architecture | Kubernetes + STACKIT Object Storage, combined with the **NE.Databridge** product | [docs](https://docs.stackit.cloud/products/storage/archiving/) |
+| Architecture | Kubernetes + STACKIT Object Storage, with the **NE.Databridge** product | [docs](https://docs.stackit.cloud/products/storage/archiving/) |
 | Write semantics | Entirely WORM | [product page](https://stackit.com/en/products/storage/stackit-archiving-service) |
-| Retrieval | **No indexing or listing available** — *"There is no indexing or listing available."* | [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) |
+| Retrieval | *"There is no indexing or listing available."* | [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) |
 | Source of record | *"a customer-operated system must always be the source that sends files to the service"* | [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) |
-| Interfaces | **SAP-ArchiveLink**, **SAP-ILM-Standard**, or a **REST API** (the latter for non-SAP systems) | [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) |
+| Interfaces | **SAP-ArchiveLink**, **SAP-ILM-Standard**, or a **REST API** (non-SAP) | [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) |
 
-### 1.1 Concepts
-
-**Routes.** An archiving route is the top-level provisioned entity. Created in the STACKIT Portal;
-it appears in the Archiving tab with a name, plan and status. A route has:
-
-- a **connection type**, defaulting to SAP-ArchiveLink — *the choice cannot be reversed later*;
-- a **plan** (Small / Medium / Large, with 9.77 GB / 97.66 GB / 292.97 GB of included storage;
-  stated transactions-per-second figures are indicative only);
-- at least one **repository**, each with a content repository name (immutable after creation) and
-  a retention period;
-- optional **access control restricting the route's repositories to an IP range**, applied on top
-  of STACKIT project/organization roles.
-
-An instance that holds archived documents cannot be deleted.
+**Routes** are the provisioned entity, created in the Portal only. Each has a connection type
+(default SAP-ArchiveLink, *cannot be changed later*), a plan (Small / Medium / Large with 9.77 /
+97.66 / 292.97 GB included), at least one repository (name immutable, with a retention period), and
+optional IP-range access control on top of project/organization roles. An instance holding archived
+documents cannot be deleted.
 — [Create and manage archiving routes](https://docs.stackit.cloud/products/storage/archiving/how-tos/create-and-manage-archiving-routes/)
 
-**Retention.** Set when the project is created or when the service is added to an existing project.
-Selection step is 1 year; the most common periods are **6 and 10 years**; extra months or years can
-be added to align with a fiscal year end; **over 12 years requires Support**. Retention
-**can only be extended and never reduced** — the service defines how long an object lock must remain
-active for the stored data.
+**Retention** is chosen in 1-year steps, commonly **6 or 10 years**, can be aligned to a fiscal year
+end, needs Support **above 12 years**, and **can only be extended, never reduced**.
 — [concepts](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/),
 [routes how-to](https://docs.stackit.cloud/products/storage/archiving/how-tos/create-and-manage-archiving-routes/)
 
-### 1.2 What a BPMN process would realistically want
-
-Given WORM semantics and the absence of listing, the useful operations are narrow and
-write-dominated:
-
-| # | Operation | Realistic BPMN use |
-| --- | --- | --- |
-| 1 | **Archive a document** into a named repository, with business metadata, and return an archive id | The end of an approval process: contract signed → archive the PDF, store the returned id on the process instance |
-| 2 | **Retrieve a document** by archive id | A later process (audit request, dispute) fetches the original. Only possible if the id was kept — nothing can enumerate the archive |
-| 3 | **Confirm/attest** that a document was archived with a given retention | A compliance gate that must record evidence, not just assume success |
-| 4 | **Extend retention** on an existing document | Litigation hold: a legal event extends a retention period mid-life |
-
-Operation 2 is the design constraint that shapes everything: **because there is no index, the
-archive id returned by operation 1 is the only handle that will ever exist.** A connector must
-therefore treat returning and persisting that id as its primary correctness obligation — losing it
-means the document is unreachable for the entire retention period. Any element template must make
-the output mapping for the archive id mandatory, not optional.
+**What a process would want:** archive a document and get an archive id; retrieve by archive id;
+attest that it was archived with a given retention; extend retention (litigation hold). Because
+nothing can be listed, **the archive id is the only handle that will ever exist** — a connector would
+have to make the output mapping for it mandatory.
 
 ---
 
 ## 2. The API situation
 
-Stated plainly: **there is no public API specification for the STACKIT Archiving Service, and no
-documented way to provision or use it other than the Portal and Support.**
-
-### 2.1 Evidence
+**There is no public API specification for the Archiving Service, and no documented way to
+provision or use it other than the Portal and Support.**
 
 | Check | Result | Verified |
 | --- | --- | --- |
-| [`stackitcloud/stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) | 53 service directories on `main`. **No `archiving`. No `NEAS`.** A code search for "archiving" across the repo returns 2 hits, both in unrelated `pim` specs (`ArchivingSpecificAttributes`, a SKU attribute of the product catalogue) | 2026-11-10 |
-| [Go SDK `services/`](https://github.com/stackitcloud/stackit-sdk-go/tree/main/services) | 48 service modules on `main`. **No `archiving`** (see §3 — it was *removed*) | 2026-11-09 |
-| Python SDK | No archiving module | 2026-11-09 |
-| Java SDK (`cloud.stackit.sdk`) | No archiving artifact | 2026-11-09 |
-| Host `archiving.api.stackit.cloud` | Does not exist (see §3 for the host that the withdrawn SDK actually used) | 2026-11-09 |
-| [Create and manage archiving routes](https://docs.stackit.cloud/products/storage/archiving/how-tos/create-and-manage-archiving-routes/) | **Portal only.** No API tab, no CLI tab, no Terraform. Creation ends at "Order fee-based" | 2026-11-09 |
-| Provisioning generally | Portal or Support ticket. Retention >12 years requires Support | 2026-11-09 |
+| [`stackitcloud/stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) | 53 service directories; **no `archiving`, no `NEAS`**. The only "archiving" hits are an unrelated `pim` SKU attribute | 2026-11-10 |
+| [Go SDK `services/`](https://github.com/stackitcloud/stackit-sdk-go/tree/main/services) | 48 modules; **no `archiving`** — it was removed (§3) | 2026-11-09 |
+| Python SDK, Java SDK (`cloud.stackit.sdk`) | No archiving module | 2026-11-09 |
+| Host `archiving.api.stackit.cloud` | Does not exist | 2026-11-09 |
+| [Routes how-to](https://docs.stackit.cloud/products/storage/archiving/how-tos/create-and-manage-archiving-routes/) | **Portal only**: no API, CLI or Terraform tab; creation ends at "Order fee-based" | 2026-11-09 |
 
-### 2.2 The broken API Explorer link
-
-The [concepts page](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) claims:
-
-> "The Archiving NEAS API is integrated into the STACKIT API ecosystem, which means it uses the
-> unified Authentication, Authorization and Clients."
-
-and states the complete specification is available in the API Explorer. **That link points at the
-IaaS specification** (`https://docs.api.eu01.stackit.cloud/documentation/iaas/version/v1`), which
-has nothing to do with archiving. It is broken, or a placeholder that was never updated.
-Verified 2026-11-09.
-
-So the only public statement that an API exists is accompanied by a link that does not lead to it.
-
-### 2.3 Do not soften this
-
-The REST API named as one of three archiving interfaces (§1) is, as far as any public source shows,
-documented nowhere: no specification, no endpoint reference, no authentication description, no SDK,
-no CLI, no Terraform resource, no example. A connector cannot be implemented against it. This is
-not "documentation we haven't found yet" — the search in §2.1 was exhaustive across STACKIT's own
-specification repository and all three of their SDKs.
+The [concepts page](https://docs.stackit.cloud/products/storage/archiving/basics/concepts/) says
+*"The Archiving NEAS API is integrated into the STACKIT API ecosystem"* and points to the API
+Explorer for the specification — but **that link opens the IaaS specification**
+(`https://docs.api.eu01.stackit.cloud/documentation/iaas/version/v1`). Verified 2026-11-09. The REST
+interface is documented nowhere: no specification, endpoint reference, auth description, SDK, CLI,
+Terraform resource or example.
 
 ---
 
-## 3. Resolved: the Go SDK archiving module
+## 3. The withdrawn Go SDK module
 
-A `pkg.go.dev` page exists for `stackit-sdk-go/services/archiving` while the repository's `main`
-has no such directory. This looked like a contradiction. It is not — **the module was withdrawn.**
+`pkg.go.dev` still serves `stackit-sdk-go/services/archiving` because the Go module proxy is
+immutable. Verified 2026-11-09 from the repository history:
 
-Verified 2026-11-09 from the repository's git history and tags:
+- Existed from `v0.1.0` (2024-07-04) to `v0.3.1` (2026-04-28); the tags are still present.
+- **Removed 2026-08-26** in [`fa79a1cd`](https://github.com/stackitcloud/stackit-sdk-go/commit/fa79a1cd),
+  *"remove(archiving): removed from API specifications (#10735)"*.
+- It only ever offered `CreateInstance`, `DeleteInstance`, `GetInstance`, `ListInstances`,
+  `PartialUpdateInstance` on `https://archiving-service.api.{region}stackit.cloud`
+  `/v1/projects/{projectId}/instances[/{instanceId}]`. Every later changelog entry is a dependency
+  bump.
+- The payload (`billingAddress`, `kind`, `serviceName`, `fiscalYearEnd`, `version`, and `system` with
+  `authId`, `sapName` and `repositories[{name, storageRetentionOffset}]`) matches the concepts page.
 
-| Fact | Detail |
-| --- | --- |
-| Module existed | `v0.1.0` (2024-07-04) through `v0.3.1` (2026-04-28) |
-| Tags still present | `refs/tags/services/archiving/v0.1.0` … `v0.3.1` (10 tags) |
-| Removed from `main` | **2026-08-26**, commit [`fa79a1cd`](https://github.com/stackitcloud/stackit-sdk-go/commit/fa79a1cd) — *"remove(archiving): removed from API specifications (#10735)"* |
-| What the commit did | Deleted all 26 files of `services/archiving/` and updated `go.work` |
-| Why `pkg.go.dev` still serves it | The Go module proxy is immutable: tagged versions remain fetchable forever, even after deletion from the default branch |
-
-The v0.1.0 changelog entry reads: *"Manage your STACKIT Archiving instance with: `CreateInstance`,
-`DeleteInstance`, `GetInstance`, `ListInstances` and `PartialUpdateInstance`."* Every later entry
-is a dependency bump — **the module never gained a single feature in two years**, then was deleted
-because the upstream specification was withdrawn.
-
-### 3.1 What the withdrawn module reveals
-
-Useful as the only concrete evidence of what a STACKIT archiving API looked like. From the sources
-at tag `services/archiving/v0.3.1`:
-
-**Host** (`configuration.go`): `https://archiving-service.api.{region}stackit.cloud`
-— note the unusual region-variable placement, and that this is *not* `archiving.api.stackit.cloud`.
-
-**Paths** (`api_default.go`):
-
-```
-POST   /v1/projects/{projectId}/instances                 CreateInstance
-GET    /v1/projects/{projectId}/instances                  ListInstances
-GET    /v1/projects/{projectId}/instances/{instanceId}      GetInstance
-PATCH  /v1/projects/{projectId}/instances/{instanceId}      PartialUpdateInstance
-DELETE /v1/projects/{projectId}/instances/{instanceId}      DeleteInstance
-```
-
-**Payload shape** (`model_instance_parameters*.go`):
-
-```jsonc
-{
-  "billingAddress": "...",        // required
-  "kind": "...",                  // required
-  "serviceName": "...",           // required
-  "fiscalYearEnd": { ... },
-  "version": "...",
-  "system": {                     // required
-    "authId": "...",
-    "sapName": "...",
-    "repositories": [             // required
-      { "name": "...", "storageRetentionOffset": { ... } }
-    ]
-  }
-}
-```
-
-The model confirms the concepts page: repositories carry a name and a retention offset, and
-`fiscalYearEnd` exists because retention aligns to a fiscal year.
-
-### 3.2 Why this does not unblock the connector
-
-| Reason | Detail |
-| --- | --- |
-| Instance lifecycle only | `CreateInstance` / `GetInstance` / `DeleteInstance` provision a *route*. **No endpoint archives, retrieves, or extends retention on a document.** Even at its best, this API never did the thing a BPMN process needs |
-| Deliberately withdrawn | Removed *because* it was removed from the API specifications. Calling it would mean targeting an API STACKIT has publicly retired |
-| No current specification | Cannot be regenerated, versioned, or validated against anything |
-| Host may be gone | Not probed; `archiving-service.api.{region}stackit.cloud` may no longer resolve |
-
-**Conclusion: the Go SDK's archiving module is historical evidence, not a path forward.** It does
-however strongly suggest that a provisioning API existed and may return — which is why §6's first
-question is whether it is coming back.
+It does not unblock a connector: it provisioned routes, **never archived, retrieved or extended
+anything**, and STACKIT withdrew it. It does suggest a provisioning API existed and may return (§5,
+Q5).
 
 ---
 
-## 4. Recommended implementation path: Object Lock on Object Storage
+## 4. The substitute: Object Lock on Object Storage — shipped
 
-Audit-proof, WORM-style retention **is** achievable on STACKIT today — not through the Archiving
-Service, but through **Object Lock on STACKIT Object Storage**, which is real, documented, and
-already reachable from the SDKs this repository depends on.
+Object Lock on STACKIT Object Storage (shipped by STACKIT on **2026-04-02**) gives per-object WORM
+retention, and both Object Storage connectors in this repository cover it:
 
-Full compatibility detail is in
-[`docs/stackit-object-storage-compatibility.md` §7](../../docs/stackit-object-storage-compatibility.md#7-object-lock-worm).
-Summary:
-
-| Capability | Status | Source |
+| Concern | API | Where in this repository |
 | --- | --- | --- |
-| Shipped | **2026-04-02** | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
-| Retention modes | `COMPLIANCE` and `GOVERNANCE` | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
-| `COMPLIANCE` semantics | Cannot be shortened or removed; **can be extended** | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
-| Maximum retention | **365 days** | [Limits](https://docs.stackit.cloud/products/storage/object-storage/reference/limits-object-storage/) |
-| Enabling on a bucket | **Only at bucket creation**; cannot be disabled afterwards | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
-| Project prerequisite | Project-level Compliance Lock required for `COMPLIANCE` mode. Without it, S3-created Object Lock buckets support **only `GOVERNANCE`** | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
-| Legal hold | Per-object, via S3 API; blocks deletion regardless of retention | [Object Lock basics](https://docs.stackit.cloud/products/storage/object-storage/basics/object-lock/) |
+| Retention and legal hold on upload | S3 | [Object Storage connector](../object-storage/README.md): *Upload object* with *Object Lock retention*, *Retain until*, *Legal hold* — applied in the same request, so there is no unprotected window |
+| Set, extend or (governance only) shorten retention | S3 `PutObjectRetention` | *Set object retention* |
+| Place or lift a legal hold | S3 `PutObjectLegalHold` | *Set legal hold* |
+| Read a version's lock state | S3 `HeadObject` | *Get object metadata* |
+| Create an Object Lock bucket | management API | [Management connector](../object-storage/README.md#management-connector): *Create bucket* with Object Lock |
+| Project compliance lock | management API | *Get / Create / Delete compliance lock* |
+| Bucket default retention | management API | *Get / Set / Delete default retention* |
 
-### 4.1 Which API does what
+Facts and measurements are in §7 of
+[`docs/stackit-object-storage-compatibility.md`](../../docs/stackit-object-storage-compatibility.md).
+The points that decided the design, measured on `eu01` on 2026-11-16:
 
-| Concern | API | Operation |
-| --- | --- | --- |
-| Project compliance lock | STACKIT management API | `createComplianceLock`, `getComplianceLock`, `deleteComplianceLock` |
-| Bucket default retention | STACKIT management API | `setDefaultRetention`, `getDefaultRetention`, `deleteDefaultRetention` |
-| **Per-object retention** | **S3 API** | `PutObjectRetention`, `GetObjectRetention` |
-| **Per-object legal hold** | **S3 API** | `PutObjectLegalHold`, `GetObjectLegalHold` |
-| Bucket lock configuration | **S3 API** | `PutObjectLockConfiguration`, `GetObjectLockConfiguration` |
+- Object Lock is set **only at bucket creation** and never removed; an Object Lock bucket has
+  versioning enabled. (This answers the former open question on versioning.)
+- The **management API** refuses an Object Lock bucket and a default retention without the project
+  compliance lock (`409 compliance_lock.required`). The **S3 API** creates the same bucket without it,
+  and `GOVERNANCE` retention works in it. `COMPLIANCE` without the compliance lock was not tried,
+  because it could not be undone.
+- An upload with Object Lock parameters needs a checksum header. The connector sends its own
+  SHA-256 as `x-amz-checksum-sha256` on every upload and part, the one checksum STACKIT verifies, so a
+  damaged body is refused before it becomes immutable.
 
-The management half is already present in STACKIT's official Java SDK,
-`cloud.stackit.sdk:objectstorage:0.5.0`, as `RetentionMode`, `SetDefaultRetentionPayload`, `ComplianceLockResponse`,
-`DefaultRetentionResponse` and `DeleteDefaultRetentionResponse` (verified 2026-11-09 against the
-published jar). The S3 half is ordinary AWS SDK v2, and STACKIT lists Object Lock configuration,
-retention and legal hold among
-[supported S3 operations](https://docs.stackit.cloud/products/storage/object-storage/reference/supported-operations-on-buckets-and-objects/).
-
-**What it would take.** The S3 half — per-object retention, legal hold, bucket lock configuration —
-needs nothing new: it is the AWS SDK the Object Storage connector already uses. The management half
-— project compliance lock, bucket default retention — needs two additions, because the Object
-Storage connector speaks only the S3 data plane with static access keys:
-
-- a client for the management API: `cloud.stackit.sdk:objectstorage` (not a dependency of this
-  repository today) or plain HTTP against the
-  [v2 specification](https://github.com/stackitcloud/stackit-api-specifications/blob/main/services/object-storage/v2/object-storage.json);
-- the service account key flow from [`auth/`](../../auth/README.md), because the management API
-  does not accept S3 access keys.
-
-### 4.2 365 days is not 6–10 years — say so
-
-This is the part that must not be glossed over, in this document or in anything shipped to users.
+### 4.1 365 days is not 6–10 years
 
 | | Archiving Service | Object Lock on Object Storage |
 | --- | --- | --- |
-| Retention | Commonly **6 or 10 years**; >12 years via Support | **365 days maximum** |
-| Guarantee | Enforced by the service for the full period | Enforced for ≤365 days; beyond that, only as long as something keeps extending it |
-| Interfaces | SAP-ArchiveLink, SAP-ILM, REST | S3 only |
-| Indexing | None | Full `ListObjects` / `ListObjectVersions` |
-| Retrieval handle | Archive id only | Bucket + key + version id, and the bucket is enumerable |
-| Audit posture | Marketed as audit-proof (*revisionssicher*) for SAP archiving | A WORM primitive; **no statutory-compliance claim** |
+| Retention | Commonly **6 or 10 years**; >12 years via Support | **365 days maximum** ([limits](https://docs.stackit.cloud/products/storage/object-storage/reference/limits-object-storage/)) |
+| Guarantee | Enforced by the service for the whole period | Enforced for ≤365 days; beyond that only while something keeps extending it |
+| Interfaces | SAP-ArchiveLink, SAP-ILM, REST | S3 |
+| Indexing | None | `ListObjects` / `ListObjectVersions` |
+| Audit posture | Marketed as *revisionssicher* | A WORM primitive; **no statutory-compliance claim** |
 
-`COMPLIANCE` retention can be extended indefinitely in ≤365-day increments, so a 10-year retention
-*can* be approximated. But doing so converts a storage guarantee into an **operational** one:
-
-- it holds only while a renewal mechanism keeps running;
-- a lapse is **unrecoverable** — once retention expires the object is deletable, and an expired lock
-  cannot be retroactively reinstated;
-- the renewal mechanism itself becomes compliance-critical infrastructure, which is exactly what
-  buying an archiving service was supposed to avoid.
-
-**A connector must not present Object Lock as equivalent to the Archiving Service**, and must not
-use the word *revisionssicher* about it. If the user's requirement is a statutory 10-year retention,
-the honest answer is the Archiving Service via the Portal, with a process that keeps the archive id.
-
-### 4.3 Practical notes for whoever implements this
-
-- **Object Lock is bucket-creation-only.** A connector can enable it on buckets *it* creates. It
-  cannot retrofit an existing bucket; the element template must say so, and a "lock an existing
-  bucket" operation must not be offered.
-- **Mode depends on project state.** Without the project Compliance Lock, an S3-created Object Lock
-  bucket gets only `GOVERNANCE` — which the holder of `s3:BypassGovernanceRetention` can delete
-  through. A connector claiming WORM must verify `getComplianceLock` first and refuse, loudly, if
-  `COMPLIANCE` is unavailable. Silently degrading to `GOVERNANCE` would be the worst possible
-  failure mode.
-- **Versioning.** Object Lock in S3 requires bucket versioning; STACKIT's Object Lock page does not
-  mention it. Listed in §6.
-- **Checksums.** Every caveat in
-  [`docs/stackit-object-storage-compatibility.md` §2](../../docs/stackit-object-storage-compatibility.md#2-the-checksum-problem)
-  applies, and matters more here: an object written into a WORM bucket **cannot be corrected or
-  deleted**. Measured on `eu01` (§2.7 of that document), default SDK uploads are stored intact, but
-  STACKIT discards CRC32 and trailer checksums unverified; the one checksum it verifies is
-  `x-amz-checksum-sha256` sent as a header (a mismatch is rejected with `BadDigest`). An archiving
-  write should therefore compute the SHA-256 before uploading and send it as that header, so that
-  STACKIT refuses a damaged body *before* it becomes immutable. Running the probe in `eu02` as well
-  remains a prerequisite.
-- **Keep retention and extension separate.** Writing an object and setting its retention are
-  distinct S3 calls. A write that succeeds followed by a retention call that fails leaves an
-  unprotected object in a bucket the user believes is WORM. Either use bucket default retention (so
-  retention is applied by the server at write time) or treat the pair as requiring explicit
-  verification and a clear failure.
+`COMPLIANCE` retention can be extended in ≤365-day steps, so a 10-year retention can be
+approximated — but that turns a storage guarantee into an **operational** one: it holds only while a
+renewal process keeps running, and a lapse is unrecoverable because an expired lock cannot be
+reinstated. **Never present Object Lock as equivalent to the Archiving Service, and never call it
+*revisionssicher*.** For a statutory 10-year retention the honest answer is the Archiving Service via
+the Portal, with a process that keeps the archive id.
 
 ---
 
-## 5. Proposed operation set for `stackit-connector-archiving`
+## 5. If the NEAS API appears
 
-Two distinct shapes, depending on which §6 answers arrive.
+**Do not create a `stackit-connector-archiving` artifact until Q1 below is answered.** A Marketplace
+connector named "Archiving" that cannot reach the Archiving Service is worse than none, and the
+interim need (WORM retention) is already met where the S3 client lives.
 
-### 5.1 Shape A — against the NEAS REST API (blocked)
+The operation set then would be: `archive-document` (repository, document, content type, metadata,
+retention override → **archive id**, stored timestamp, effective retention), `retrieve-document`
+(archive id → document, content type, metadata), `get-document-metadata`, and `extend-retention`.
+No `list` (the service has none) and no `delete` (WORM). Provisioning stays out: route creation is a
+commercial act ("Order fee-based").
 
-Buildable only if §6 Q1–Q4 are answered. Provisioning operations are deliberately excluded: route
-creation is a commercial act ("Order fee-based") and does not belong in a BPMN task.
+### 5.1 Blocking questions
 
-| Operation | Inputs | Outputs | Depends on |
-| --- | --- | --- | --- |
-| `archive-document` | repository name, document (bytes/reference), content type, business metadata, retention override | **archive id**, stored timestamp, effective retention until | Q1, Q2, Q4 |
-| `retrieve-document` | archive id (+ repository) | document bytes or a reference, content type, metadata | Q1, Q2, Q4 |
-| `get-document-metadata` | archive id | retention until, stored timestamp, repository, size | Q1, Q2 |
-| `extend-retention` | archive id, new retention-until | effective retention until | Q1, Q2, Q3 |
+Q1–Q4 can go into one Support ticket.
 
-Notes: no `list` operation is proposed — the service has none, and offering one would be a lie. No
-`delete` operation is proposed — WORM. `extend-retention` is listed last because retention being
-extend-only is documented at the *repository* level, not per document (§6 Q3).
+| # | Question | Why it matters |
+| --- | --- | --- |
+| **Q1** | **Is the NEAS REST API public at all**, and is an OpenAPI specification published or planned? (§2) | Without a specification there is nothing to implement |
+| **Q2** | Host, base path, auth scheme, and request/response shapes for archive and retrieve | Defines every operation |
+| **Q3** | Is retention extend-only per document, or only per repository (where it is documented)? | Decides whether litigation hold is expressible |
+| **Q4** | Service account or a route-specific credential? The routes how-to *"does not mention credentials of any kind, including for a REST API"* | Decides whether [`auth/`](../../auth/README.md) can be reused |
+| **Q5** | Is the provisioning API removed on 2026-08-26 coming back? | Wait, or design around the Portal for good. Watch [`stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) |
+| **Q6** | Does `archiving-service.api.{region}stackit.cloud` still resolve? Not probed | Cheap signal whether the control plane exists |
+| **Q7** | Does the Archiving Service use Object Lock underneath (*"the service defines how long an object lock must remain active"*)? If so, how does it exceed 365 days? | A higher internal limit would change §4.1 |
+| **Q8** | Can a route's IP allowlist admit Camunda SaaS egress, which the customer does not control? | May rule the connector out on SaaS regardless of Q1 |
 
-### 5.2 Shape B — Object Lock on Object Storage (buildable now)
+### 5.2 Unverified
 
-Best delivered as **operations on the existing `stackit-connector-object-storage`**, not as a
-separate artifact: it is the same S3 client, the same credentials, the same element template
-family, and shipping a second connector named "archiving" that is really object storage would
-mislead users in the Marketplace.
-
-| Operation | Inputs | Outputs | Note |
-| --- | --- | --- | --- |
-| `create-worm-bucket` | bucket name, retention mode, default retention days | bucket name, mode, days | Must fail loudly if `COMPLIANCE` requested without project Compliance Lock |
-| `put-object-with-retention` | bucket, key, body, mode, retain-until | key, version id, retain-until | Prefer bucket default retention so the server applies it at write time |
-| `get-object-retention` | bucket, key, version id | mode, retain-until, legal hold | Evidence for a compliance gate |
-| `extend-object-retention` | bucket, key, version id, new retain-until | retain-until | Extend only; must reject any shortening before calling |
-| `set-legal-hold` | bucket, key, version id, on/off | legal hold status | Litigation hold |
-
-Every one of these must carry the 365-day ceiling in its element-template documentation.
-
-### 5.3 Recommendation
-
-**Do not create a `stackit-connector-archiving` artifact yet.** Instead:
-
-1. Keep this directory as a design document with no module (current state).
-2. Implement Shape B as Object Lock operations on the Object Storage connector, once that connector
-   is stable and the §2.7 checksum probe in the compatibility document
-   (`StorageGridChecksumProbeLiveIT`, opt-in) has been run in both regions — `eu01` is done
-   (2026-11-10), `eu02` is not.
-3. Revisit Shape A only when §6 Q1 is answered affirmatively.
-
-Rationale: a Marketplace connector named "Archiving" that cannot reach the Archiving Service is
-worse than no connector. The capability users actually need in the interim — WORM retention — fits
-naturally where the S3 client already lives.
-
----
-
-## 6. Open questions blocking implementation
-
-Ordered by how much they block. Q1 blocks everything in Shape A.
-
-| # | Question | Why it blocks | How to resolve |
-| --- | --- | --- | --- |
-| **Q1** | **Is the NEAS REST API public at all?** The concepts page says it is "integrated into the STACKIT API ecosystem" but links to the IaaS spec (§2.2) | Without a specification there is nothing to implement | **Support ticket.** Ask directly: is there a published OpenAPI specification for the Archiving NEAS API, and if not, is one planned? |
-| **Q2** | **What does it look like?** Host, base path, auth scheme, request/response shape for archive and retrieve | Determines every operation in §5.1 | Same ticket. Request the specification or a reference document |
-| **Q3** | **Is retention extend-only per document, or only per repository?** Documented at repository level; §5.1's `extend-retention` assumes per document | Decides whether litigation hold is expressible at all | Same ticket |
-| **Q4** | **Service account or route-specific credential?** The concepts page claims unified STACKIT auth; the routes how-to *"does not mention credentials of any kind, including for a REST API"* | Decides whether the connector reuses this repository's existing service-account auth module or needs a new credential type. A route-scoped secret would also need Camunda secret handling | Same ticket. Ask what a non-SAP system presents when calling the REST interface |
-| **Q5** | **Is the withdrawn provisioning API returning?** Removed 2026-08-26 "from API specifications" (§3) — withdrawn, deprecated, or being replaced? | Determines whether to wait or design around the Portal permanently | Ask Support; watch [`stackit-api-specifications`](https://github.com/stackitcloud/stackit-api-specifications/tree/main/services) for an `archiving` directory |
-| **Q6** | **Does `archiving-service.api.{region}stackit.cloud` still resolve?** Not probed | Cheap signal on whether the control plane still exists | DNS/TLS probe, then an unauthenticated request |
-| **Q7** | **Does Object Lock require bucket versioning on STACKIT?** S3 requires it; STACKIT's page omits it | Shape B's `create-worm-bucket` needs to know whether to enable versioning | Test against a real tenant |
-| **Q8** | **Does the Archiving Service itself use Object Lock underneath?** The routes how-to says *"the service defines how long an object lock must remain active for stored data"* | If it does, how does it exceed the 365-day Object Storage ceiling (§4.2)? Would reveal either a higher internal limit or a different mechanism — and a higher limit would materially change Shape B | Ask Support alongside Q1 |
-| **Q9** | **What authorization does archiving use?** Routes mention project/organization roles plus optional IP-range restriction | An IP allowlist is hostile to a connector running on Camunda SaaS, whose egress addresses the customer does not control. May make Shape A unusable on SaaS regardless of Q1 | Ask Support whether SaaS egress ranges can be allowlisted |
-
-### 6.1 Unverified / open questions
-
-Beyond the blockers, the following are **not verified** and are recorded so they are not mistaken
-for fact:
-
-1. **The NEAS acronym is never expanded** in any STACKIT documentation found. Its relationship to
-   NE.Databridge is assumed, not established.
-2. **Whether the REST interface is available on all plans**, or only on routes created with a
-   specific connection type. The connection type defaults to SAP-ArchiveLink and *cannot be
-   reversed* — so a route may be permanently unable to speak REST. Unconfirmed, and if true it is a
-   significant trap for any user we point at this.
-3. **Archive id format and stability** — completely undocumented. §1.2 argues the id is the only
-   retrieval handle; nothing confirms it is stable, opaque, or even returned.
-4. **Whether archived documents are reachable from the Object Storage API** of the same project. The
-   service is built on Object Storage, but nothing suggests the buckets are customer-visible, and
-   §1 says there is no listing.
-5. **Pricing and quota behaviour on exceeding a plan's included storage** — the routes page gives
-   included storage per plan but not what happens beyond it.
-6. **Region availability.** The withdrawn Go SDK host had a `{region}` variable; no current source
-   states which regions offer archiving.
-7. **Whether retention >12 years changes the interface**, or only the commercial terms.
-8. **Whether `PartialUpdateInstance` could extend retention** on the withdrawn API — the payload
-   included `InstanceUpdateParameters`, but its retention semantics were never documented.
+1. **NEAS is never expanded** in STACKIT's documentation; its relation to NE.Databridge is assumed.
+2. **Whether every connection type speaks REST.** The type defaults to SAP-ArchiveLink and cannot be
+   changed, so a route may be permanently unable to use REST.
+3. **Archive id format and stability** — undocumented, including whether one is returned at all.
+4. **Whether archived documents are visible through the project's Object Storage API.**
+5. **What happens beyond a plan's included storage** (pricing, quota).
+6. **Region availability** — the withdrawn host had a `{region}` variable; no current source says
+   which regions offer archiving.
+7. **Whether retention above 12 years changes the interface** or only the commercial terms.
+8. **Whether `PartialUpdateInstance` could extend retention** on the withdrawn API.
 
 ---
 
 ## Related documents
 
 - [`docs/stackit-object-storage-compatibility.md`](../../docs/stackit-object-storage-compatibility.md)
-  — required reading before implementing Shape B; §7 covers Object Lock, §2 the checksum risk that
-  makes WORM writes dangerous to get wrong.
-- [`connectors/object-storage/`](../object-storage/) — where Shape B should be implemented.
+  — §7 Object Lock, §2 checksums.
+- [`connectors/object-storage/`](../object-storage/README.md) — the shipped Object Lock operations.
