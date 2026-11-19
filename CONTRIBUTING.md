@@ -75,5 +75,5 @@ remove or reword it.
 ## Code of conduct
 
 Be decent to each other. Assume good faith, critique the code rather than the person, and
-accept that maintainers may say no to a change without that being a judgement of you. Conduct
-concerns can go to **conduct@envite.de**.
+accept that maintainers may say no to a change without that being a judgement of you. Raise
+conduct concerns privately with envite consulting through [www.envite.de](https://www.envite.de).

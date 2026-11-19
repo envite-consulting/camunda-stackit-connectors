@@ -29,6 +29,7 @@ body:
       description: Which connector is affected?
       options:
         - Object Storage (outbound)
+        - Object Storage Management (outbound)
         - Other / not sure
     validations:
       required: true

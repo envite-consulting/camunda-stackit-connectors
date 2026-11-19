@@ -34,9 +34,15 @@ artifacts on Maven Central.
 
 **Always use `./mvnw`.** The
 `io.camunda.connector:element-template-generator-maven-plugin` declares
-`requiredMavenVersion 3.10.0` and `requiredJavaVersion 21`. The wrapper pins Maven 3.10.0;
+`requiredMavenVersion 3.10.0` and `requiredJavaVersion 21`. The wrapper pins a Maven 3.10.x;
 a system Maven 3.9.x fails part-way through template generation. The enforcer fails the
 build early with an actionable message if you bypass the wrapper.
+
+`.mvn/wrapper/maven-wrapper.properties` deliberately has **no `distributionSha256Sum`**: without
+`unzip` (as in the image `bundle/Dockerfile` builds in) the only-script `mvnw` downloads the
+`-bin.tar.gz` instead of the `-bin.zip`, so a single checksum always fails one of the two.
+Dependabot rewrites that file on every Maven bump; do not add a checksum back. It also commits
+`mvnw.cmd` with CRLF in the index; `git add --renormalize mvnw.cmd` fixes the resulting diff.
 
 ```bash
 ./mvnw -B verify                    # everything, including Docker-backed integration tests
@@ -93,15 +99,15 @@ Every `S3Client` (and any future `S3AsyncClient`) that talks to STACKIT Object S
 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
 ```
 
-STACKIT Object Storage is NetApp StorageGRID. StorageGRID 11.9 (region `eu01`) and 12.0
-(region `eu02`) support only `x-amz-checksum-sha256` and list `x-amz-sdk-checksum-algorithm`
-and `x-amz-trailer` as unsupported, while AWS SDK for Java v2 ≥ 2.30 defaults to sending a
-CRC32 `aws-chunked` trailer. Measured on `eu01` (2026-11-10): STACKIT accepts that trailer and
-**discards it** — no corruption, but also no integrity check, so the default buys nothing and
-rests on headers the vendor calls unsupported; `eu02` is unmeasured. Do not switch to the SDK
+STACKIT Object Storage is NetApp StorageGRID (12.0 in both regions since November 2026, upgraded
+without notice). StorageGRID 11.9 and 12.0 support only `x-amz-checksum-sha256` and list
+`x-amz-sdk-checksum-algorithm` and `x-amz-trailer` as unsupported, while AWS SDK for Java v2 ≥ 2.30
+defaults to sending a CRC32 `aws-chunked` trailer. Measured on `eu01` and `eu02`: STACKIT accepts
+that trailer and **discards it** — no corruption, but also no integrity check, so the default buys
+nothing and rests on headers the vendor calls unsupported. Do not switch to the SDK
 default, or add a checksum algorithm, without re-running `StorageGridChecksumProbeLiveIT` in
 both regions. There is a regression test asserting those headers are absent — if you ever see
-it fail, do not "fix" it by relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.57) and emits no
+it fail, do not "fix" it by relaxing the assertion. `S3Presigner.Builder` has no such setters (SDK 2.59) and emits no
 checksum parameters; `ChecksumHeaderRegressionTest$PresignedUpload` pins that, so re-check it
 on SDK upgrades.
 
@@ -195,6 +201,15 @@ Operations without inputs (`listBuckets`, `getComplianceLock`, ...) make the eng
 `operation` variable, which Jackson rejects for an external type id. `ManagementRequest`'s
 deserializer supplies an empty object in that case; keep it if you restructure the request.
 
+### Fatal errors are a `ConnectorRetryException` with zero retries
+
+Throw failures through `StackitConnectorErrors.fatal(...)` or `.retryable(...)` in `core/`, never as
+a plain `ConnectorException`. The 8.10 runtime retries a plain `ConnectorException` with the retry
+count of the service task, so bad credentials or a corrupted upload would be repeated three times
+before the incident appears. Only a `ConnectorInputException` (which carries no error code) or an
+explicit `retries(0)` stops that, so `fatal` builds the latter. Use
+`StackitConnectorErrors.isRetryable` to tell the two apart; the exception type alone does not.
+
 ### Connector `type` namespace
 
 Connector types are `de.envite:<service>:1`. **Never** use the `io.camunda:` namespace for a
@@ -236,7 +251,7 @@ Three tiers, selected by JUnit tag:
 | --- | --- | --- | --- |
 | Unit | none | `mvn test` (surefire) | nothing — no network, no Docker |
 | Integration | `integration` | `mvn verify` (failsafe), CI | [Floci](https://floci.io) in a container |
-| Live | `live` | `tools/live-tests.sh` (`-Pstackit-live`) only | a real STACKIT project |
+| Live | `live` | `tools/live-tests.sh` (`-Pstackit-live`) only, see [`docs/live-tests.md`](docs/live-tests.md) | a real STACKIT project |
 
 - Mock the `S3Client` for behaviour tests; use Floci only for round-trip tests. Floci is an
   emulator, not StorageGRID: anything that depends on how STACKIT really behaves belongs in a
@@ -268,6 +283,16 @@ Three tiers, selected by JUnit tag:
   package: `runtime.test`, not `connector.test`) with JSON fixtures shaped exactly as the
   engine sends them, so a renamed binding is caught by a test rather than by a user.
 - Pin Docker image tags in `src/test/resources/docker-images.properties`.
+
+## Releasing
+
+Run the **Release** workflow (Actions → Release → *Run workflow*) on `main` with the version, e.g.
+`0.1.0`. It tags `v<version>`, builds and tests, and creates a **draft** GitHub Release with the
+shaded jars, the element templates and a zip of them; publish the draft by hand. Leave
+*publish_to_maven_central* off until the Central secrets described at the top of
+`.github/workflows/release.yml` exist. Give the Marketplace raw template URLs from a release tag
+(`.../camunda-stackit-connectors/v0.1.0/connectors/...`), not from `main`, so the listing never
+offers a template newer than the released jar.
 
 ## Upgrading Camunda
 

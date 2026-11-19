@@ -19,6 +19,8 @@ Closes #
 - [ ] Integration tests added or updated where the change touches the STACKIT
       API or the connector runtime (`@Tag("integration")`, run by `./mvnw verify`,
       **requires a running Docker daemon**).
+- [ ] Live tests run (`tools/live-tests.sh`, see `docs/live-tests.md`) if the
+      change affects how a connector talks to STACKIT, or upgrades the AWS SDK.
 - [ ] `./mvnw verify` passes locally.
 
 ## Element templates
@@ -36,7 +38,8 @@ Element templates are **generated build output** — never hand-edit the JSON.
       (`versioned/` is excluded from the CI drift check on purpose — those
       snapshots are pinned and are not regenerated.)
 - [ ] `engineVersion` on `@ElementTemplate` still matches the Camunda minor
-      version this release targets (`version.camunda` / `version.connectors`).
+      version this release targets (`version.connectors` /
+      `camunda.engine.version.range` in the root pom).
 - [ ] Templates still validate against the Zeebe JSON schema
       (`npm ci --prefix tools && node tools/validate-element-templates.mjs`).
 
@@ -50,7 +53,7 @@ Element templates are **generated build output** — never hand-edit the JSON.
 
 ## Documentation
 
-- [ ] `docs/` updated (new properties, new operations, new error codes).
+- [ ] The connector's `README.md` updated (new properties, operations, error codes).
 - [ ] `README.md` updated if the change affects installation or supported
       Camunda / STACKIT versions.
 - [ ] Breaking changes and required manual migration steps are called out in the

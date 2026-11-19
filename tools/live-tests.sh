@@ -23,7 +23,7 @@ if [[ -f "$env_file" ]]; then
   set +a
 elif [[ -z "${STACKIT_IT_S3_BUCKET:-}" ]]; then
   echo "No $env_file found and no STACKIT_IT_* variables set." >&2
-  echo "Create it from tools/live-test.env.example - see README.md, 'Testing against real STACKIT'." >&2
+  echo "Create it from tools/live-test.env.example - see docs/live-tests.md." >&2
   exit 1
 fi
 

@@ -35,7 +35,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * group, read from environment variables so that no credential is ever written into the repository.
  *
  * <p>{@code tools/live-tests.sh} loads these from the gitignored {@code .secrets/live-test.env}.
- * See README.md, "Testing against real STACKIT".
+ * See docs/live-tests.md.
  *
  * @param region the STACKIT region the bucket lives in
  * @param bucket an existing bucket the tests may write to; they only touch keys under their own

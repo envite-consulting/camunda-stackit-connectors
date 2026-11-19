@@ -130,7 +130,7 @@
       Surefire excludes them so that `mvn test` needs no Docker daemon.
 
       Live tests are tagged @Tag("live"), talk to a real STACKIT project and run only with
-      -Pstackit-live (see README.md, "Testing against real STACKIT"). Neither a normal build
+      -Pstackit-live (see docs/live-tests.md). Neither a normal build
       nor CI ever selects them.
     -->
     <!--
