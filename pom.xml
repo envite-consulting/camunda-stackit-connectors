@@ -71,7 +71,7 @@
       interchangeable. Bump version.connectors, camunda.engine.version.range and the
       engineVersion of every @ElementTemplate together. See AGENTS.md ("Upgrading Camunda").
     -->
-    <version.connectors>8.10.4</version.connectors>
+    <version.connectors>8.10.6</version.connectors>
     <!-- Must be kept in sync with version.connectors; feeds @ElementTemplate(engineVersion). -->
     <camunda.engine.version.range>^8.10</camunda.engine.version.range>
 
