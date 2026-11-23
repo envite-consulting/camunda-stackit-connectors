@@ -122,7 +122,7 @@
     <plugin.version.source>3.4.0</plugin.version.source>
     <plugin.version.spotless>3.11.0</plugin.version.spotless>
     <plugin.version.surefire>3.6.1</plugin.version.surefire>
-    <plugin.version.versions>2.25.1</plugin.version.versions>
+    <plugin.version.versions>2.25.2</plugin.version.versions>
 
     <!-- ==================== Conventions ==================== -->
     <!--
