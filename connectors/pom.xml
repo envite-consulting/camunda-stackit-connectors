@@ -17,13 +17,14 @@
     build wiring (element template generation, shaded jar) that every connector needs.</description>
 
   <!--
-    Only implemented connectors are reactor modules. The archiving/ and workflows/
-    directories hold the API research and the planned design for the next two connectors;
-    they get a pom.xml when there is code to build. Publishing empty jars for them would
-    put artifacts on Maven Central that do nothing.
+    Only implemented connectors are reactor modules. The archiving/ directory holds the API
+    research for a connector that is blocked on STACKIT; it gets a pom.xml when there is code
+    to build. Publishing an empty jar for it would put an artifact on Maven Central that does
+    nothing.
   -->
   <modules>
     <module>object-storage</module>
+    <module>workflows</module>
   </modules>
 
   <dependencies>

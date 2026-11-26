@@ -33,6 +33,7 @@ COPY core/pom.xml core/
 COPY auth/pom.xml auth/
 COPY connectors/pom.xml connectors/
 COPY connectors/object-storage/pom.xml connectors/object-storage/
+COPY connectors/workflows/pom.xml connectors/workflows/
 COPY bundle/pom.xml bundle/
 
 # Pre-populate the local repository for the whole reactor; inter-module SNAPSHOT dependencies are
