@@ -167,6 +167,11 @@
         <artifactId>stackit-connector-object-storage</artifactId>
         <version>${project.version}</version>
       </dependency>
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>stackit-connector-workflows</artifactId>
+        <version>${project.version}</version>
+      </dependency>
 
       <!--
         Imported before the Camunda SDK and AWS SDK so that a single Jackson line is used
@@ -442,6 +447,19 @@
             <shadedArtifactAttached>true</shadedArtifactAttached>
             <shadedClassifierName>with-dependencies</shadedClassifierName>
             <createDependencyReducedPom>false</createDependencyReducedPom>
+            <!--
+              netty-tcnative reaches the test classpath through connector-runtime-test ->
+              camunda-client-java, but its per-platform classifier artifacts resolve with scope
+              `runtime` and would otherwise be shaded: about 6 MB of native BoringSSL libraries,
+              which the runtime already ships for its own gRPC client and which no connector
+              uses. Check with `unzip -l` after a dependency upgrade (AGENTS.md, non-negotiable 5).
+            -->
+            <artifactSet>
+              <excludes>
+                <exclude>io.netty:netty-tcnative-boringssl-static</exclude>
+                <exclude>io.netty:netty-tcnative-classes</exclude>
+              </excludes>
+            </artifactSet>
             <filters>
               <filter>
                 <artifact>*:*</artifact>
