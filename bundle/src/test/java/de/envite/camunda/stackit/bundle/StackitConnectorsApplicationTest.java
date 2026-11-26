@@ -80,6 +80,9 @@ class StackitConnectorsApplicationTest {
   private static final String OBJECT_STORAGE_MANAGEMENT_TYPE =
       "de.envite:stackit-object-storage-management:1";
 
+  /** The job type of the STACKIT Workflows connector, from its own module. */
+  private static final String WORKFLOWS_TYPE = "de.envite:stackit-workflows:1";
+
   /** Connector implementations must come from this repository, not from a coincidental namesake. */
   private static final String STACKIT_PACKAGE_PREFIX = "de.envite.camunda.stackit.";
 
@@ -101,11 +104,11 @@ class StackitConnectorsApplicationTest {
                 + " module is missing from bundle/pom.xml, or its META-INF/services entry or"
                 + " @OutboundConnector annotation is missing")
         .extracting(OutboundConnectorConfiguration::type)
-        .contains(OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE);
+        .contains(OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE, WORKFLOWS_TYPE);
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE})
+  @ValueSource(strings = {OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE, WORKFLOWS_TYPE})
   void instantiatesTheDiscoveredConnectorFromThisRepository(final String type) {
     var function = outboundConnectorFactory.getInstance(type);
 

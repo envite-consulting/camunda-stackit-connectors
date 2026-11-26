@@ -1,0 +1,20 @@
+{
+  "authentication": {
+    "tokenUrl": "https://keycloak.example.com/realms/airflow/protocol/openid-connect/token",
+    "clientId": "{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}",
+    "clientSecret": "{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}",
+    "audience": "airflow-api",
+    "clientAuthentication": "basic"
+  },
+  "configuration": {
+    "instanceUrl": "https://my-instance.example.com",
+    "apiVersion": "v2"
+  },
+  "operationType": "listDagRuns",
+  "operation": {
+    "dagId": "camunda_stackit_demo",
+    "states": "failed",
+    "limit": 10,
+    "offset": 0
+  }
+}
