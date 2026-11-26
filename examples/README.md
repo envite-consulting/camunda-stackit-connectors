@@ -1,12 +1,15 @@
-# Example: upload to STACKIT Object Storage from a local Camunda
+# Examples: STACKIT connectors on a local Camunda
 
-A Camunda 8 Orchestration Cluster, the STACKIT connectors bundle, and a process that uploads an
-object to your bucket, all on Docker Compose.
+A Camunda 8 Orchestration Cluster, the STACKIT connectors bundle, and two example processes, all on
+Docker Compose: one uploads an object to your bucket (sections 1-4), the other runs a DAG on your
+STACKIT Workflows instance ([STACKIT Workflows](#stackit-workflows)).
 
 ```
 docker-compose.yml                         Orchestration Cluster + STACKIT connectors bundle
 .env.example                               template for .env (credentials, image tags)
-bpmn/stackit-object-storage-example.bpmn   the example process
+bpmn/stackit-object-storage-example.bpmn   the Object Storage example process
+bpmn/stackit-workflows-example.bpmn        the Workflows example process
+dags/camunda_stackit_demo.py               the DAG the Workflows example runs, for your instance
 .camunda/element-templates/                where Desktop Modeler looks for templates
 ```
 
@@ -101,3 +104,107 @@ docker image rm envite/stackit-connectors:dev
 ```
 
 The uploaded object stays in your bucket.
+
+## STACKIT Workflows
+
+Runs [`dags/camunda_stackit_demo.py`](dags/camunda_stackit_demo.py) on your STACKIT Workflows
+instance from [`bpmn/stackit-workflows-example.bpmn`](bpmn/stackit-workflows-example.bpmn): start the
+run, poll its state every 15 s, then fetch the result from XCom, or on failure find the failed task,
+fetch the end of its log and put it into a user task. Connector details:
+[`connectors/workflows`](../connectors/workflows/README.md).
+
+### Prerequisites
+
+1. A **Workflows instance**, Airflow 2.11 (`workflows-2.3-airflow-2.11`) or 3.1
+   (`workflows-3.0-airflow-3.1`).
+2. An **OAuth2 identity provider** configured on the instance (Portal: Workflows → instance →
+   Identity provider), with an **API Audience** set. Without the audience STACKIT disables the
+   session endpoint the connector logs in through.
+3. A **client in that identity provider** - not a STACKIT service account - with the
+   `client_credentials` grant, whose tokens carry that audience in `aud` and the Airflow role
+   **`User`** in the roles claim (Keycloak: a confidential client with service account roles, an
+   audience mapper and the realm role `User`).
+
+### 1. Put the DAG on the instance
+
+The DAG has no dependencies beyond Airflow itself and is unpaused on creation.
+
+- **Airflow 2.11:** commit `dags/camunda_stackit_demo.py` to the Git repository configured as the
+  instance's DAGs repository.
+- **Airflow 3.1:** add it to a DAG bundle of the instance (Git, or an S3 bundle on STACKIT Object
+  Storage).
+
+In the Airflow UI, check that `camunda_stackit_demo` is listed, has no import error and is **not
+paused**.
+
+### 2. Configure and start
+
+```bash
+cd examples
+cp .env.example .env          # if not done yet
+$EDITOR .env                  # the SECRET_STACKIT_WORKFLOWS_* section; see the comments there
+docker compose up -d --build
+```
+
+Instance URL, API version, token URL, scope and audience are secrets, like client ID and secret:
+the five connector tasks reference them as `{{secrets.STACKIT_WORKFLOWS_*}}`, so `.env` is the one
+place to change them, not every task, and they belong to the environment rather than to process
+data. Leave optional values empty but keep the lines. If you do not use Object Storage, put any
+placeholder into the two `SECRET_STACKIT_S3_*` values; Compose requires them.
+
+Link the template for Desktop Modeler (on Windows copy it):
+
+```bash
+ln -sf ../../../connectors/workflows/element-templates/stackit-workflows-outbound-connector.json \
+       examples/.camunda/element-templates/
+```
+
+### 3. Deploy and run
+
+```bash
+curl -u demo:demo -X POST http://localhost:8080/v2/deployments \
+  -F "resources=@bpmn/stackit-workflows-example.bpmn"
+
+# Success after about 20 s (defaults: delaySeconds 20, shouldFail false)
+curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
+  -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1001", "delaySeconds": 20, "shouldFail": false}}'
+
+# A long run: the polling loop turns about eight times
+curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
+  -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1002", "delaySeconds": 120, "shouldFail": false}}'
+
+# Failure: the task export raises
+curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
+  -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1003", "delaySeconds": 0, "shouldFail": true}}'
+```
+
+Add `"dagId": "camunda_stackit_dmeo"` to the variables to see the error boundary event: the
+trigger fails with `NOT_FOUND`, which the error expression turns into the BPMN error
+`DAG_NOT_FOUND`, and the instance ends in *DAG not found* instead of an incident.
+
+What Operate shows:
+
+| Start | Path | Variables |
+| --- | --- | --- |
+| Success | *Get run status* once or twice, *Get export result*, *Export completed* | `exportRunId` (`camunda-<processInstanceKey>-<elementInstanceKey>`), `exportRunState: "success"`, `exportResult: {"orderId": "A-1001", "exportedRecords": 42}` |
+| Long run | The loop *Get run status* → *Wait 15 s* several times, then as above | as above |
+| Failure | *Find failed task*, *Get log of failed task*, user task *Review failed export* (complete it in Tasklist), *Export failed* | `exportRunState: "failed"`, `failedTaskId: "export"`, `failureLog` ending in `RuntimeError: Export of order A-1003 failed …` |
+| Wrong DAG ID | *DAG not found* | none from Airflow |
+
+In Airflow the runs appear under their `camunda-…` run IDs with the note *Started by the Camunda
+example process*.
+
+### When it fails
+
+| Incident mentions | Cause |
+| --- | --- |
+| `Secret with name 'STACKIT_WORKFLOWS_…' is not available` | The line is missing in `.env`, or the containers were not recreated after editing it (`docker compose up -d`) |
+| `AUTHENTICATION_FAILED` … `refused to issue an access token` | Token URL, client ID or secret wrong, the client lacks the `client_credentials` grant, or the IdP wants the other client authentication method |
+| `AUTHENTICATION_FAILED` … `session endpoint is not available` | No **API Audience** configured on the instance's identity provider, or a wrong instance URL |
+| `AUTHENTICATION_FAILED` … `HTTP 401` at the session endpoint | The token's `aud` does not match the API Audience, or its issuer is not the IdP configured on the instance (a different realm, tenant or a STACKIT service account) |
+| `ACCESS_DENIED` | `403`: the client's token lacks the Airflow role `User` in the roles claim |
+| `NOT_FOUND` (in an incident, not *DAG not found*) | Another task's DAG or run is unknown, or the API version does not match the instance (`v1` vs `v2`) |
+| *DAG not found* end event | The DAG is not loaded (check the DAG list and import errors in the Airflow UI) or the DAG ID is mistyped |
+| `CONFLICT` … `is paused` | Unpause the DAG in the Airflow UI |
+| Runs stay `queued`, the loop spins until *Run timed out* | The DAG is paused and *Fail if DAG is paused* was switched off, or the instance has no capacity |
+| `CONNECTION_ERROR` | The instance or IdP is not reachable from the connectors container (DNS, proxy, a network-attached instance) |

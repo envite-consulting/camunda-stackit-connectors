@@ -110,6 +110,17 @@ services:
       # SECRET_STACKIT_S3_ACCESS_KEY backs the BPMN reference {{secrets.STACKIT_S3_ACCESS_KEY}}.
       SECRET_STACKIT_S3_ACCESS_KEY: ${SECRET_STACKIT_S3_ACCESS_KEY:?set it in examples/.env - see .env.example}
       SECRET_STACKIT_S3_SECRET_ACCESS_KEY: ${SECRET_STACKIT_S3_SECRET_ACCESS_KEY:?set it in examples/.env - see .env.example}
+
+      # STACKIT Workflows, read from .env, for bpmn/stackit-workflows-example.bpmn. Optional
+      # (`:-`), so that the Object Storage example keeps working without them; the process then
+      # fails with an incident naming the empty value. They reach only this container.
+      SECRET_STACKIT_WORKFLOWS_INSTANCE_URL: ${SECRET_STACKIT_WORKFLOWS_INSTANCE_URL:-}
+      SECRET_STACKIT_WORKFLOWS_API_VERSION: ${SECRET_STACKIT_WORKFLOWS_API_VERSION:-}
+      SECRET_STACKIT_WORKFLOWS_TOKEN_URL: ${SECRET_STACKIT_WORKFLOWS_TOKEN_URL:-}
+      SECRET_STACKIT_WORKFLOWS_CLIENT_ID: ${SECRET_STACKIT_WORKFLOWS_CLIENT_ID:-}
+      SECRET_STACKIT_WORKFLOWS_CLIENT_SECRET: ${SECRET_STACKIT_WORKFLOWS_CLIENT_SECRET:-}
+      SECRET_STACKIT_WORKFLOWS_SCOPE: ${SECRET_STACKIT_WORKFLOWS_SCOPE:-}
+      SECRET_STACKIT_WORKFLOWS_AUDIENCE: ${SECRET_STACKIT_WORKFLOWS_AUDIENCE:-}
     # The HEALTHCHECK baked into the image (GET /actuator/health/readiness) is inherited; it
     # reports DOWN until the cluster is reachable, so it is a real readiness signal here.
     networks:
