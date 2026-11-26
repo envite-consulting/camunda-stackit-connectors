@@ -5,8 +5,9 @@
 ![Compatible with: Camunda 8.10](https://img.shields.io/badge/Compatible%20with-Camunda%208.10-0072Ce)
 
 Camunda 8 outbound connectors for [STACKIT](https://stackit.com), the sovereign cloud of the
-Schwarz Group. Store, retrieve and protect files in STACKIT Object Storage from a BPMN process,
-with the data staying in Germany (`eu01`) or Austria (`eu02`).
+Schwarz Group. Store, retrieve and protect files in STACKIT Object Storage and run data pipelines on STACKIT
+Workflows (managed Apache Airflow) from a BPMN process, with the data staying in Germany (`eu01`)
+or Austria (`eu02`).
 
 Maintained by [envite consulting GmbH](https://www.envite.de), a Camunda partner.
 
@@ -16,8 +17,10 @@ Maintained by [envite consulting GmbH](https://www.envite.de), a Camunda partner
 | --- | --- | --- |
 | [STACKIT Object Storage](connectors/object-storage) | Upload, download, copy, delete, list and inspect objects; presigned download and upload URLs; Object Lock retention and legal holds | An Object Storage access key |
 | [STACKIT Object Storage Management](connectors/object-storage#management-connector) | Create and delete buckets (optionally with Object Lock), credentials groups and access keys; manage the project compliance lock and a bucket's default retention | A STACKIT service account key |
+| [STACKIT Workflows](connectors/workflows) | Trigger Airflow DAG runs on STACKIT Workflows (Airflow 2.11 and 3.1) and read their state, task instances, XCom results and logs | A client in the identity provider configured on the Workflows instance |
 
-Both ship in one jar, each with its own element template.
+The two Object Storage connectors ship in one jar, each with its own element template; Workflows
+has its own jar and template.
 
 - **Verified uploads.** STACKIT checks a SHA-256 of every upload before it stores anything. For a
   Camunda document that is the checksum the document store recorded, so what is stored is provably
@@ -46,10 +49,13 @@ The element templates need Desktop Modeler **5.52+** or a current Web Modeler.
 ### 1. Install the element templates
 
 Download them from the [latest release](https://github.com/envite-consulting/camunda-stackit-connectors/releases)
-or from [`connectors/object-storage/element-templates/`](connectors/object-storage/element-templates):
+or from the modules:
 
-- `stackit-object-storage-outbound-connector.json`: objects
-- `stackit-object-storage-management-outbound-connector.json`: buckets, credentials, Object Lock settings
+- [`connectors/object-storage/element-templates/`](connectors/object-storage/element-templates)
+  - `stackit-object-storage-outbound-connector.json`: objects
+  - `stackit-object-storage-management-outbound-connector.json`: buckets, credentials, Object Lock settings
+- [`connectors/workflows/element-templates/`](connectors/workflows/element-templates)
+  - `stackit-workflows-outbound-connector.json`: Airflow DAG runs on STACKIT Workflows
 
 **Desktop Modeler:** put them into `.camunda/element-templates/` next to your diagram (or in any
 parent directory), or into the Modeler's user data directory, then reload with `Ctrl+R` / `Cmd+R`.
@@ -59,7 +65,8 @@ parent directory), or into the Modeler's user data directory, then reload with `
 
 Camunda does not host third-party connector code, **not even on SaaS**: you run it in your own
 Connector Runtime. The usual way is to mount the shaded jar from a release into Camunda's
-`camunda/connectors-bundle` image:
+`camunda/connectors-bundle` image (the Workflows connector has its own jar,
+`stackit-connector-workflows-<version>-with-dependencies.jar`; mount it the same way):
 
 ```bash
 docker run --rm \
@@ -138,8 +145,9 @@ With Podman, point Testcontainers at its socket first:
 - **Archiving**: blocked until STACKIT publishes an API for its Archiving Service. Object Lock,
   which both connectors above cover, is the available substitute;
   [the design document](connectors/archiving) explains where it falls short.
-- **Workflows** (managed Apache Airflow): STACKIT's API cannot trigger a DAG run, so a connector
-  has to call the Airflow REST API of the instance; see [the design document](connectors/workflows).
+- **Workflows inbound connector**: wait for a DAG run without a polling loop in BPMN; the outbound
+  connector is [available](connectors/workflows), the research is in
+  [`docs/stackit-workflows.md`](docs/stackit-workflows.md).
 - **KMS**, **Dremio** and further services on request.
 
 Ideas and issues are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md).

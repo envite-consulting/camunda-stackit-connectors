@@ -17,17 +17,17 @@ connectors/
   pom.xml                      stackit-connectors-parent    parent for connector modules
   object-storage/              stackit-connector-object-storage   ← implemented: data plane + management
   archiving/                   design doc only, no pom yet
-  workflows/                   design doc only, no pom yet
+  workflows/                   stackit-connector-workflows        ← implemented: Airflow REST API of a Workflows instance
 bundle/                        stackit-connectors-bundle    runnable Connector Runtime
-docs/                          cross-cutting technical docs
-examples/                      docker-compose + example BPMN
+docs/                          cross-cutting technical docs (incl. stackit-workflows.md research)
+examples/                      docker-compose, example BPMN (bpmn/) and the example Airflow DAG (dags/)
 tools/                         element template schema validation (Node), live test runner
 build/                         license header template
 .secrets/                      gitignored: live test credentials, never committed
 ```
 
-`archiving/` and `workflows/` deliberately contain only a `README.md` design document. They
-get a `pom.xml` when there is code to build — publishing empty jars would put do-nothing
+`archiving/` deliberately contains only a `README.md` design document. It gets a `pom.xml`
+when there is code to build — publishing empty jars would put do-nothing
 artifacts on Maven Central.
 
 ## Build
@@ -195,7 +195,23 @@ The management connector is the first consumer of `auth/`. It holds a `static fi
 StackitTokenProviderCache`, so jobs with the same key share a token. Its custom endpoint
 receives a bearer token and is therefore restricted to `https` on `*.stackit.cloud` (see
 `ManagementEndpoints`), unlike the data-plane endpoint, where a SigV4 signature never reveals the
-secret. `auth/` remains the foundation for the planned Archiving, Workflows and KMS connectors.
+secret. `auth/` remains the foundation for the planned Archiving and KMS connectors.
+
+### Workflows talks to Airflow, not to the STACKIT Workflows API
+
+`connectors/workflows` calls the Airflow REST API of an instance (`/api/v1` on Airflow 2.11,
+`/api/v2` on 3.1; the version is explicit configuration, never detected). It authenticates with a
+`client_credentials` token from the customer's identity provider, exchanged for a session cookie at
+`POST /api/stackit/v1/session`. The session provider depends only on `StackitTokenProvider` from
+`auth/`, so the key flow can be added as a second token source without touching it. Everything that
+differs between the two Airflow versions lives in `AirflowApiVersion`; keep it there. The instance
+URL and the token URL must be `https` and redirects are never followed, but there is deliberately
+no host allowlist: the IdP is the customer's and the instance host pattern is undocumented.
+
+It has no integration tier: an Airflow container lacks the STACKIT session endpoint. Unit tests use
+WireMock; `ExampleProcessConsistencyTest` keeps `examples/bpmn/stackit-workflows-example.bpmn` in step
+with the generated template; the live tests trigger `examples/dags/camunda_stackit_demo.py` itself,
+never a copy.
 
 Operations without inputs (`listBuckets`, `getComplianceLock`, ...) make the engine send no
 `operation` variable, which Jackson rejects for an external type id. `ManagementRequest`'s

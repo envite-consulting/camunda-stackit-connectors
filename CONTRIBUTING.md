@@ -13,8 +13,9 @@ covers process.
 For anything larger than a bug fix, **open an issue first**. A new connector in particular is
 worth discussing up front: some STACKIT services do not expose an API that a connector can
 usefully call, and we would rather tell you that before you write code than after. The design
-documents under `connectors/archiving/` and `connectors/workflows/` are examples of exactly
-that problem.
+document under `connectors/archiving/` is an example of exactly that problem, and
+[`docs/stackit-workflows.md`](docs/stackit-workflows.md) shows the research that comes before a
+connector whose service API is not the one a process needs.
 
 ## Development setup
 

@@ -19,6 +19,7 @@ contains every STACKIT connector.
 | --- | --- | --- |
 | STACKIT Object Storage | `de.envite:stackit-object-storage:1` | `de.envite.connectors.stackit.objectstorage.v1` |
 | STACKIT Object Storage Management | `de.envite:stackit-object-storage-management:1` | `de.envite.connectors.stackit.objectstorage.management.v1` |
+| STACKIT Workflows | `de.envite:stackit-workflows:1` | `de.envite.connectors.stackit.workflows.v1` |
 
 **No container image is published.** Build it yourself as shown [below](#option-2-run-this-bundle).
 
@@ -45,9 +46,12 @@ the variable names are the 8.8+ ones from the
 [properties reference](https://docs.camunda.io/docs/apis-tools/camunda-spring-boot-starter/properties-reference/)
 (that page's own examples still show pre-8.8 names).
 
-The jar (about 17 MB) contains the connectors, the AWS SDK and its Apache HTTP client. It leaves out
-what the runtime already provides (Connector SDK, Jackson, SLF4J) and Netty, so it cannot shadow the
-runtime's own copies.
+The Object Storage jar (about 11 MB) contains both Object Storage connectors, the AWS SDK and its
+Apache HTTP client. The Workflows connector is a separate jar,
+`stackit-connector-workflows-<version>-with-dependencies.jar` (about 140 KB, only this repository's
+classes); mount it next to the first under a different file name in `/opt/app/`. Both leave out what
+the runtime already provides (Connector SDK, Jackson, SLF4J) and Netty, including netty-tcnative's
+native libraries, so they cannot shadow the runtime's own copies.
 
 ## Option 2: run this bundle
 

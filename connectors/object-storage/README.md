@@ -452,7 +452,7 @@ Generated from the connectors' annotations at build time; never edit them by han
 | `hybrid/*-hybrid.json` | Only to pin a different job type. Not needed for hybrid mode: no Camunda-managed runtime knows the `de.envite:` types |
 | `versioned/*.json` | Earlier versions, for Modeler's upgrade path |
 
-The jar is `stackit-connector-object-storage-<version>-with-dependencies.jar` (about 17 MB). It
+The jar is `stackit-connector-object-storage-<version>-with-dependencies.jar` (about 11 MB). It
 contains the connectors, the AWS SDK and its Apache HTTP client, and leaves out what the Connector
 Runtime provides (Connector SDK, Jackson, SLF4J). Building, testing and conventions:
 [`AGENTS.md`](../../AGENTS.md); tests against real STACKIT: [`docs/live-tests.md`](../../docs/live-tests.md).

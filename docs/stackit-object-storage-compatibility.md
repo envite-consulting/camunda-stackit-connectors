@@ -776,5 +776,5 @@ Nothing below has been settled. None of it should be treated as fact.
 
 - [`connectors/archiving/README.md`](../connectors/archiving/README.md) — Archiving Service design
   notes; depends on §7 (Object Lock) for its recommended implementation path.
-- [`connectors/workflows/README.md`](../connectors/workflows/README.md) — Workflows design notes;
+- [`docs/stackit-workflows.md`](stackit-workflows.md) — Workflows design notes;
   §5.1 of this document is relevant to the `S3DagBundle` DAG-source option.
