@@ -1,0 +1,838 @@
+{
+  "$schema" : "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+  "name" : "Hybrid STACKIT Workflows Outbound Connector",
+  "id" : "de.envite.connectors.stackit.workflows.v1-hybrid",
+  "description" : "Triggers and inspects DAG runs on STACKIT Workflows (managed Apache Airflow 2.11 or 3.1). Requires on the instance: an OAuth2 identity provider, an API Audience configured in its settings (without it STACKIT disables the session endpoint), and a client in that identity provider with the Airflow role User. Not a STACKIT service account.",
+  "keywords" : [ "STACKIT", "workflows", "airflow", "apache airflow", "dag", "trigger dag", "dag run", "xcom", "pipeline", "sovereign cloud" ],
+  "documentationRef" : "https://github.com/envite-consulting/camunda-stackit-connectors/blob/main/connectors/workflows/README.md",
+  "version" : 1,
+  "category" : {
+    "id" : "connectors",
+    "name" : "Connectors"
+  },
+  "appliesTo" : [ "bpmn:Task" ],
+  "elementType" : {
+    "value" : "bpmn:ServiceTask"
+  },
+  "engines" : {
+    "camunda" : "^8.10"
+  },
+  "groups" : [ {
+    "id" : "taskDefinitionType",
+    "label" : "Task definition type"
+  }, {
+    "id" : "authentication",
+    "label" : "Authentication"
+  }, {
+    "id" : "configuration",
+    "label" : "Configuration"
+  }, {
+    "id" : "operation",
+    "label" : "Operation"
+  }, {
+    "id" : "connector",
+    "label" : "Connector"
+  }, {
+    "id" : "output",
+    "label" : "Output mapping"
+  }, {
+    "id" : "error",
+    "label" : "Error handling"
+  }, {
+    "id" : "retries",
+    "label" : "Retries"
+  } ],
+  "properties" : [ {
+    "id" : "taskDefinitionType",
+    "value" : "de.envite:stackit-workflows:1",
+    "group" : "taskDefinitionType",
+    "binding" : {
+      "property" : "type",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.tokenUrl",
+    "label" : "Token URL",
+    "description" : "The token endpoint of the identity provider configured on the Workflows instance, for example https://keycloak.example.com/realms/airflow/protocol/openid-connect/token. Must use https.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.tokenUrl",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.clientId",
+    "label" : "Client ID",
+    "description" : "A client in that identity provider allowed to use the client_credentials grant, for example {{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}. Not a STACKIT service account.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.clientId",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.clientSecret",
+    "label" : "Client secret",
+    "description" : "Store it as a Camunda secret and reference it, for example {{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.clientSecret",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.scope",
+    "label" : "Scope",
+    "description" : "Optional, space-separated. Entra ID needs the application ID URI of the API with /.default, for example api://my-airflow-api/.default.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.scope",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.audience",
+    "label" : "Audience",
+    "description" : "Optional audience parameter for identity providers that take one (Okta, Auth0). The token's aud claim must match the API Audience configured on the instance, however the identity provider sets it.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.audience",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.resource",
+    "label" : "Resource",
+    "description" : "Optional RFC 8707 resource parameter. Leave empty unless your identity provider requires it.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.resource",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "authentication.clientAuthentication",
+    "label" : "Client authentication",
+    "description" : "How the client ID and secret are sent to the token endpoint. Use the method the client is configured for in the identity provider.",
+    "optional" : false,
+    "value" : "basic",
+    "group" : "authentication",
+    "binding" : {
+      "name" : "authentication.clientAuthentication",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "HTTP Basic (client_secret_basic)",
+      "value" : "basic"
+    }, {
+      "name" : "In the request body (client_secret_post)",
+      "value" : "post"
+    } ]
+  }, {
+    "id" : "configuration.instanceUrl",
+    "label" : "Instance URL",
+    "description" : "The URL of the STACKIT Workflows instance, as shown in the STACKIT Portal (the Airflow UI URL). Without /api/v1 or /api/v2. Must use https.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.instanceUrl",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "configuration.apiVersion",
+    "label" : "Airflow API version",
+    "description" : "v1 for Airflow 2.11 instances (workflows-2.3-airflow-2.11, /api/v1), v2 for Airflow 3.1 instances (workflows-3.0-airflow-3.1, /api/v2). The connector does not detect the version; a wrong value fails with NOT_FOUND.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true,
+      "pattern" : {
+        "value" : "^(\\s*[vV][12]\\s*|=.*|\\{\\{secrets\\.[A-Za-z0-9_.\\-]+}})$",
+        "message" : "must be v1 (Airflow 2.11), v2 (Airflow 3.1), a FEEL expression or a secret reference"
+      }
+    },
+    "feel" : "optional",
+    "group" : "configuration",
+    "binding" : {
+      "name" : "configuration.apiVersion",
+      "type" : "zeebe:input"
+    },
+    "type" : "String"
+  }, {
+    "id" : "operationType",
+    "label" : "Operation",
+    "description" : "The Airflow operation this task performs. Every operation returns immediately.",
+    "value" : "triggerDagRun",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operationType",
+      "type" : "zeebe:input"
+    },
+    "type" : "Dropdown",
+    "choices" : [ {
+      "name" : "Trigger DAG run",
+      "value" : "triggerDagRun"
+    }, {
+      "name" : "Get DAG run",
+      "value" : "getDagRun"
+    }, {
+      "name" : "List DAG runs",
+      "value" : "listDagRuns"
+    }, {
+      "name" : "Get task instances",
+      "value" : "getTaskInstances"
+    }, {
+      "name" : "Get XCom value",
+      "value" : "getXcom"
+    }, {
+      "name" : "Get task logs",
+      "value" : "getTaskLogs"
+    } ]
+  }, {
+    "id" : "triggerDagRunDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG to run.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "triggerDagRunConf",
+    "label" : "Configuration (conf)",
+    "description" : "A FEEL context the DAG reads as dag_run.conf, for example ={orderId: orderId, delaySeconds: 20}. It is stored with the run in Airflow: do not put secrets into it.",
+    "optional" : true,
+    "feel" : "required",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.conf",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "triggerDagRunFailIfPaused",
+    "label" : "Fail if DAG is paused",
+    "description" : "Airflow accepts runs of a paused DAG but never executes them; the run would stay queued for ever. When checked, the connector checks the DAG first and fails with CONFLICT if it is paused.",
+    "optional" : true,
+    "value" : true,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.failIfPaused",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "Boolean"
+  }, {
+    "id" : "triggerDagRunDagRunId",
+    "label" : "Run ID",
+    "description" : "Optional. Leave empty to use camunda-<processInstanceKey>-<elementInstanceKey>, which makes retries idempotent. If you set it, keep it unique per run and stable across retries. Allowed: letters, digits and _ . ~ : + -",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagRunId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "triggerDagRunNote",
+    "label" : "Note",
+    "description" : "Optional note shown on the run in the Airflow UI.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.note",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "triggerDagRunLogicalDate",
+    "label" : "Logical date",
+    "description" : "Optional ISO 8601 date-time with offset, for example 2026-11-26T00:00:00Z. Leave empty: Airflow 2 then uses the trigger time, Airflow 3 creates the run without a logical date.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.logicalDate",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "triggerDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getDagRunDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getDagRunDagRunId",
+    "label" : "Run ID",
+    "description" : "The dagRunId returned by Trigger DAG run.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagRunId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getDagRun",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listDagRunsDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listDagRuns",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listDagRunsStates",
+    "label" : "States",
+    "description" : "Optional, comma-separated: queued, running, success, failed. Empty lists runs in every state.",
+    "optional" : true,
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.states",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listDagRuns",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "listDagRunsLimit",
+    "label" : "Limit",
+    "description" : "Runs per page, 1 to 100. Airflow caps a page at 100 by default.",
+    "optional" : true,
+    "value" : 25,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.limit",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listDagRuns",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "listDagRunsOffset",
+    "label" : "Offset",
+    "description" : "How many runs to skip, for the next page.",
+    "optional" : true,
+    "value" : 0,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.offset",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "listDagRuns",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "getTaskInstancesDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskInstances",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getTaskInstancesDagRunId",
+    "label" : "Run ID",
+    "description" : "The dagRunId returned by Trigger DAG run.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagRunId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskInstances",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getXcomDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getXcom",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getXcomDagRunId",
+    "label" : "Run ID",
+    "description" : "The dagRunId returned by Trigger DAG run.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagRunId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getXcom",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getXcomTaskId",
+    "label" : "Task ID",
+    "description" : "The task that pushed the value; group.task for a task in a task group.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.taskId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getXcom",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getXcomKey",
+    "label" : "XCom key",
+    "description" : "return_value is what a TaskFlow task returns.",
+    "optional" : true,
+    "value" : "return_value",
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.key",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getXcom",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getXcomMapIndex",
+    "label" : "Map index",
+    "description" : "Only for a mapped task (expand()): which mapped instance to read.",
+    "optional" : true,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.mapIndex",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getXcom",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "getTaskLogsDagId",
+    "label" : "DAG ID",
+    "description" : "The dag_id of the DAG.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getTaskLogsDagRunId",
+    "label" : "Run ID",
+    "description" : "The dagRunId returned by Trigger DAG run.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.dagRunId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getTaskLogsTaskId",
+    "label" : "Task ID",
+    "description" : "The task whose log to read, for example =failedTasks.failedTaskIds[1] after Get task instances.",
+    "optional" : false,
+    "constraints" : {
+      "notEmpty" : true
+    },
+    "feel" : "optional",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.taskId",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "String"
+  }, {
+    "id" : "getTaskLogsTryNumber",
+    "label" : "Try number",
+    "description" : "Optional. Empty reads the latest try, which costs one extra request.",
+    "optional" : true,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.tryNumber",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "getTaskLogsMaxCharacters",
+    "label" : "Max characters",
+    "description" : "Keeps the last N characters of the log, 100 to 1000000. A process variable is stored with the instance; keep this small.",
+    "optional" : true,
+    "value" : 8000,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.maxCharacters",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "getTaskLogsMapIndex",
+    "label" : "Map index",
+    "description" : "Only for a mapped task (expand()): which mapped instance to read.",
+    "optional" : true,
+    "feel" : "static",
+    "group" : "operation",
+    "binding" : {
+      "name" : "operation.mapIndex",
+      "type" : "zeebe:input"
+    },
+    "condition" : {
+      "property" : "operationType",
+      "equals" : "getTaskLogs",
+      "type" : "simple"
+    },
+    "type" : "Number"
+  }, {
+    "id" : "version",
+    "label" : "Version",
+    "description" : "Version of the element template",
+    "value" : "1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateVersion",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "id",
+    "label" : "ID",
+    "description" : "ID of the element template",
+    "value" : "de.envite.connectors.stackit.workflows.v1",
+    "group" : "connector",
+    "binding" : {
+      "key" : "elementTemplateId",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Hidden"
+  }, {
+    "id" : "resultVariable",
+    "label" : "Result variable",
+    "description" : "Name of variable to store the response in. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-variable\" target=\"_blank\">documentation</a>.",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultVariable",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "resultExpression",
+    "label" : "Result expression",
+    "description" : "Expression to map the response into process variables. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/#result-expression\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "output",
+    "binding" : {
+      "key" : "resultExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "errorExpression",
+    "label" : "Error expression",
+    "description" : "Expression to handle errors. Details in the <a href=\"https://docs.camunda.io/docs/components/connectors/use-connectors/\" target=\"_blank\">documentation</a>.",
+    "feel" : "required",
+    "group" : "error",
+    "binding" : {
+      "key" : "errorExpression",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "Text"
+  }, {
+    "id" : "retryCount",
+    "label" : "Retries",
+    "description" : "Number of retries",
+    "value" : "3",
+    "feel" : "optional",
+    "group" : "retries",
+    "binding" : {
+      "property" : "retries",
+      "type" : "zeebe:taskDefinition"
+    },
+    "type" : "String"
+  }, {
+    "id" : "retryBackoff",
+    "label" : "Retry backoff",
+    "description" : "ISO-8601 duration to wait between retries",
+    "value" : "PT30S",
+    "group" : "retries",
+    "binding" : {
+      "key" : "retryBackoff",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  }, {
+    "id" : "jobTimeout",
+    "label" : "Job timeout",
+    "description" : "ISO-8601 duration after which Zeebe considers this job timed out if not yet completed. Leave empty to use the default timeout",
+    "optional" : true,
+    "group" : "retries",
+    "binding" : {
+      "key" : "jobTimeout",
+      "type" : "zeebe:taskHeader"
+    },
+    "type" : "String"
+  } ],
+  "steps" : [ {
+    "name" : "Trigger DAG run",
+    "description" : "Starts a run of a DAG and returns its run ID and state (queued) immediately; it does not wait for the run. Safe to retry: the run ID is derived from the job, and a run that already exists is returned instead of started twice.",
+    "keywords" : [ "trigger", "start", "run", "dag", "triggerDagRun", "airflow" ],
+    "presetId" : "operationType_triggerDagRun"
+  }, {
+    "name" : "Get DAG run",
+    "description" : "Reads the state of one run: queued, running, success or failed. Use it in a loop with a timer to wait for a run to finish.",
+    "keywords" : [ "get", "status", "state", "poll", "dag run", "getDagRun" ],
+    "presetId" : "operationType_getDagRun"
+  }, {
+    "name" : "List DAG runs",
+    "description" : "Lists one page of a DAG's runs, newest first, with totalEntries for paging. The connector does not page by itself.",
+    "keywords" : [ "list", "runs", "history", "listDagRuns" ],
+    "presetId" : "operationType_listDagRuns"
+  }, {
+    "name" : "Get task instances",
+    "description" : "Lists the tasks of one run with state, try number and duration, plus failedTaskIds: the IDs of the tasks that failed, to pick the one whose log to read.",
+    "keywords" : [ "tasks", "task instances", "failed task", "getTaskInstances" ],
+    "presetId" : "operationType_getTaskInstances"
+  }, {
+    "name" : "Get XCom value",
+    "description" : "Reads a value a task pushed to XCom - by default its return value (return_value) - as JSON, so the process can use it in FEEL.",
+    "keywords" : [ "xcom", "result", "return value", "output", "getXcom" ],
+    "presetId" : "operationType_getXcom"
+  }, {
+    "name" : "Get task logs",
+    "description" : "Reads the end of a task's log, for example for an incident or a user task. Limited to Max characters; truncated tells whether the start was cut off.",
+    "keywords" : [ "logs", "log", "error", "exception", "getTaskLogs" ],
+    "presetId" : "operationType_getTaskLogs"
+  } ],
+  "presets" : [ {
+    "id" : "operationType_triggerDagRun",
+    "properties" : {
+      "operationType" : "triggerDagRun"
+    }
+  }, {
+    "id" : "operationType_getDagRun",
+    "properties" : {
+      "operationType" : "getDagRun"
+    }
+  }, {
+    "id" : "operationType_listDagRuns",
+    "properties" : {
+      "operationType" : "listDagRuns"
+    }
+  }, {
+    "id" : "operationType_getTaskInstances",
+    "properties" : {
+      "operationType" : "getTaskInstances"
+    }
+  }, {
+    "id" : "operationType_getXcom",
+    "properties" : {
+      "operationType" : "getXcom"
+    }
+  }, {
+    "id" : "operationType_getTaskLogs",
+    "properties" : {
+      "operationType" : "getTaskLogs"
+    }
+  } ],
+  "icon" : {
+    "contents" : "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K"
+  }
+}
