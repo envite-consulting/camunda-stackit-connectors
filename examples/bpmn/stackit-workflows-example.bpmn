@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_StackitWorkflowsExample" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.42.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.10.0">
+  <bpmn:process id="stackit-workflows-example" name="STACKIT Workflows example" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_OrderReceived" name="Order received">
+      <bpmn:outgoing>Flow_ToTrigger</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToTrigger" sourceRef="StartEvent_OrderReceived" targetRef="ServiceTask_TriggerDagRun" />
+    <bpmn:serviceTask id="ServiceTask_TriggerDagRun" name="Start DAG run" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
+          <zeebe:input source="basic" target="authentication.clientAuthentication" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
+          <zeebe:input source="triggerDagRun" target="operationType" />
+          <zeebe:input source="=if dagId = null then &#34;camunda_stackit_demo&#34; else dagId" target="operation.dagId" />
+          <zeebe:input source="={orderId: orderId, delaySeconds: delaySeconds, shouldFail: shouldFail}" target="operation.conf" />
+          <zeebe:input source="=true" target="operation.failIfPaused" />
+          <zeebe:input source="Started by the Camunda example process stackit-workflows-example" target="operation.note" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="1" />
+          <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
+          <zeebe:header key="resultExpression" value="={exportRunId: response.dagRunId, exportDagId: response.dagId}" />
+          <zeebe:header key="errorExpression" value="=if error.code = &#34;NOT_FOUND&#34; then bpmnError(&#34;DAG_NOT_FOUND&#34;, error.message) else null" />
+          <zeebe:header key="retryBackoff" value="PT30S" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToTrigger</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWait</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="BoundaryEvent_DagNotFound" name="DAG not found" attachedToRef="ServiceTask_TriggerDagRun">
+      <bpmn:outgoing>Flow_ToDagNotFound</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_DagNotFound" errorRef="Error_DagNotFound" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="Flow_ToDagNotFound" sourceRef="BoundaryEvent_DagNotFound" targetRef="EndEvent_DagNotFound" />
+    <bpmn:endEvent id="EndEvent_DagNotFound" name="DAG not found">
+      <bpmn:incoming>Flow_ToDagNotFound</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToWait" sourceRef="ServiceTask_TriggerDagRun" targetRef="SubProcess_WaitForRun" />
+    <bpmn:subProcess id="SubProcess_WaitForRun" name="Wait for the DAG run">
+      <bpmn:incoming>Flow_ToWait</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToOutcome</bpmn:outgoing>
+      <bpmn:startEvent id="StartEvent_Wait">
+        <bpmn:outgoing>Flow_ToPollMerge</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="Flow_ToPollMerge" sourceRef="StartEvent_Wait" targetRef="Gateway_PollMerge" />
+      <bpmn:exclusiveGateway id="Gateway_PollMerge">
+        <bpmn:incoming>Flow_ToPollMerge</bpmn:incoming>
+        <bpmn:incoming>Flow_PollAgain</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToGetStatus</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:sequenceFlow id="Flow_ToGetStatus" sourceRef="Gateway_PollMerge" targetRef="ServiceTask_GetDagRun" />
+      <bpmn:serviceTask id="ServiceTask_GetDagRun" name="Get run status" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
+          <zeebe:ioMapping>
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
+            <zeebe:input source="basic" target="authentication.clientAuthentication" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
+            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
+            <zeebe:input source="getDagRun" target="operationType" />
+            <zeebe:input source="=exportDagId" target="operation.dagId" />
+            <zeebe:input source="=exportRunId" target="operation.dagRunId" />
+          </zeebe:ioMapping>
+          <zeebe:taskHeaders>
+            <zeebe:header key="elementTemplateVersion" value="1" />
+            <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
+            <zeebe:header key="resultExpression" value="={exportRunState: response.state}" />
+            <zeebe:header key="retryBackoff" value="PT30S" />
+          </zeebe:taskHeaders>
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToGetStatus</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToFinished</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="Flow_ToFinished" sourceRef="ServiceTask_GetDagRun" targetRef="Gateway_RunFinished" />
+      <bpmn:exclusiveGateway id="Gateway_RunFinished" name="Run finished?" default="Flow_Finished">
+        <bpmn:incoming>Flow_ToFinished</bpmn:incoming>
+        <bpmn:outgoing>Flow_Finished</bpmn:outgoing>
+        <bpmn:outgoing>Flow_StillRunning</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:sequenceFlow id="Flow_Finished" name="success or failed" sourceRef="Gateway_RunFinished" targetRef="EndEvent_RunFinished" />
+      <bpmn:sequenceFlow id="Flow_StillRunning" name="queued or running" sourceRef="Gateway_RunFinished" targetRef="TimerEvent_PollInterval">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=list contains(["queued", "running"], exportRunState)</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:intermediateCatchEvent id="TimerEvent_PollInterval" name="Wait 15 s">
+        <bpmn:incoming>Flow_StillRunning</bpmn:incoming>
+        <bpmn:outgoing>Flow_PollAgain</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="TimerEventDefinition_PollInterval">
+          <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT15S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:intermediateCatchEvent>
+      <bpmn:sequenceFlow id="Flow_PollAgain" sourceRef="TimerEvent_PollInterval" targetRef="Gateway_PollMerge" />
+      <bpmn:endEvent id="EndEvent_RunFinished" name="Run finished">
+        <bpmn:incoming>Flow_Finished</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:textAnnotation id="TextAnnotation_PollInterval">
+        <bpmn:text>PT15S keeps the demo short. In production poll every few minutes (PT2M to PT10M): every round is a job and an Airflow API call, and real DAG runs take minutes to hours.</bpmn:text>
+      </bpmn:textAnnotation>
+      <bpmn:association id="Association_PollInterval" associationDirection="None" sourceRef="TimerEvent_PollInterval" targetRef="TextAnnotation_PollInterval" />
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="BoundaryEvent_Timeout" name="15 min" attachedToRef="SubProcess_WaitForRun">
+      <bpmn:outgoing>Flow_ToTimedOut</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_Timeout">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT15M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="Flow_ToTimedOut" sourceRef="BoundaryEvent_Timeout" targetRef="EndEvent_TimedOut" />
+    <bpmn:endEvent id="EndEvent_TimedOut" name="Run timed out">
+      <bpmn:incoming>Flow_ToTimedOut</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToOutcome" sourceRef="SubProcess_WaitForRun" targetRef="Gateway_Outcome" />
+    <bpmn:exclusiveGateway id="Gateway_Outcome" name="Run succeeded?" default="Flow_Failed">
+      <bpmn:incoming>Flow_ToOutcome</bpmn:incoming>
+      <bpmn:outgoing>Flow_Succeeded</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Failed</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Succeeded" name="success" sourceRef="Gateway_Outcome" targetRef="ServiceTask_GetXcom">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=exportRunState = "success"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Failed" name="failed" sourceRef="Gateway_Outcome" targetRef="ServiceTask_GetTaskInstances" />
+    <bpmn:serviceTask id="ServiceTask_GetXcom" name="Get export result" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
+          <zeebe:input source="basic" target="authentication.clientAuthentication" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
+          <zeebe:input source="getXcom" target="operationType" />
+          <zeebe:input source="=exportDagId" target="operation.dagId" />
+          <zeebe:input source="=exportRunId" target="operation.dagRunId" />
+          <zeebe:input source="export" target="operation.taskId" />
+          <zeebe:input source="return_value" target="operation.key" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="1" />
+          <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
+          <zeebe:header key="resultExpression" value="={exportResult: response.value}" />
+          <zeebe:header key="retryBackoff" value="PT30S" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Succeeded</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCompleted</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToCompleted" sourceRef="ServiceTask_GetXcom" targetRef="EndEvent_ExportCompleted" />
+    <bpmn:endEvent id="EndEvent_ExportCompleted" name="Export completed">
+      <bpmn:incoming>Flow_ToCompleted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="ServiceTask_GetTaskInstances" name="Find failed task" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
+          <zeebe:input source="basic" target="authentication.clientAuthentication" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
+          <zeebe:input source="getTaskInstances" target="operationType" />
+          <zeebe:input source="=exportDagId" target="operation.dagId" />
+          <zeebe:input source="=exportRunId" target="operation.dagRunId" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="1" />
+          <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
+          <zeebe:header key="resultExpression" value="={failedTaskId: if count(response.failedTaskIds) &gt; 0 then response.failedTaskIds[1] else &#34;export&#34;}" />
+          <zeebe:header key="retryBackoff" value="PT30S" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Failed</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToGetLogs</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToGetLogs" sourceRef="ServiceTask_GetTaskInstances" targetRef="ServiceTask_GetTaskLogs" />
+    <bpmn:serviceTask id="ServiceTask_GetTaskLogs" name="Get log of failed task" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
+          <zeebe:input source="basic" target="authentication.clientAuthentication" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
+          <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
+          <zeebe:input source="getTaskLogs" target="operationType" />
+          <zeebe:input source="=exportDagId" target="operation.dagId" />
+          <zeebe:input source="=exportRunId" target="operation.dagRunId" />
+          <zeebe:input source="=failedTaskId" target="operation.taskId" />
+          <zeebe:input source="=4000" target="operation.maxCharacters" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="1" />
+          <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
+          <zeebe:header key="resultExpression" value="={failureLog: response.content, failureLogTruncated: response.truncated}" />
+          <zeebe:header key="retryBackoff" value="PT30S" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToGetLogs</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToReview</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToReview" sourceRef="ServiceTask_GetTaskLogs" targetRef="UserTask_ReviewFailure" />
+    <bpmn:userTask id="UserTask_ReviewFailure" name="Review failed export">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToFailed</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_ToFailed" sourceRef="UserTask_ReviewFailure" targetRef="EndEvent_ExportFailed" />
+    <bpmn:endEvent id="EndEvent_ExportFailed" name="Export failed">
+      <bpmn:incoming>Flow_ToFailed</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:error id="Error_DagNotFound" name="DAG not found" errorCode="DAG_NOT_FOUND" />
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="stackit-workflows-example">
+      <bpmndi:BPMNShape id="StartEvent_OrderReceived_di" bpmnElement="StartEvent_OrderReceived">
+        <dc:Bounds x="152" y="182" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="135" y="225" width="71" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_TriggerDagRun_di" bpmnElement="ServiceTask_TriggerDagRun">
+        <dc:Bounds x="240" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_DagNotFound_di" bpmnElement="EndEvent_DagNotFound">
+        <dc:Bounds x="272" y="332" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="254" y="375" width="72" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_WaitForRun_di" bpmnElement="SubProcess_WaitForRun" isExpanded="true">
+        <dc:Bounds x="400" y="100" width="540" height="250" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_Wait_di" bpmnElement="StartEvent_Wait">
+        <dc:Bounds x="432" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_PollMerge_di" bpmnElement="Gateway_PollMerge" isMarkerVisible="true">
+        <dc:Bounds x="505" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_GetDagRun_di" bpmnElement="ServiceTask_GetDagRun">
+        <dc:Bounds x="590" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_RunFinished_di" bpmnElement="Gateway_RunFinished" isMarkerVisible="true">
+        <dc:Bounds x="745" y="175" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="736" y="145" width="68" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RunFinished_di" bpmnElement="EndEvent_RunFinished">
+        <dc:Bounds x="862" y="182" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="849" y="225" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="TimerEvent_PollInterval_di" bpmnElement="TimerEvent_PollInterval">
+        <dc:Bounds x="752" y="272" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="796" y="283" width="48" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="TextAnnotation_PollInterval_di" bpmnElement="TextAnnotation_PollInterval">
+        <dc:Bounds x="430" y="370" width="300" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_TimedOut_di" bpmnElement="EndEvent_TimedOut">
+        <dc:Bounds x="852" y="412" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="835" y="455" width="70" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Outcome_di" bpmnElement="Gateway_Outcome" isMarkerVisible="true">
+        <dc:Bounds x="990" y="175" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="974" y="145" width="82" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_GetXcom_di" bpmnElement="ServiceTask_GetXcom">
+        <dc:Bounds x="1090" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ExportCompleted_di" bpmnElement="EndEvent_ExportCompleted">
+        <dc:Bounds x="1242" y="182" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1216" y="225" width="88" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_GetTaskInstances_di" bpmnElement="ServiceTask_GetTaskInstances">
+        <dc:Bounds x="1090" y="400" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_GetTaskLogs_di" bpmnElement="ServiceTask_GetTaskLogs">
+        <dc:Bounds x="1240" y="400" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_ReviewFailure_di" bpmnElement="UserTask_ReviewFailure">
+        <dc:Bounds x="1390" y="400" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_ExportFailed_di" bpmnElement="EndEvent_ExportFailed">
+        <dc:Bounds x="1542" y="422" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1528" y="465" width="64" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BoundaryEvent_DagNotFound_di" bpmnElement="BoundaryEvent_DagNotFound">
+        <dc:Bounds x="272" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="314" y="263" width="72" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BoundaryEvent_Timeout_di" bpmnElement="BoundaryEvent_Timeout">
+        <dc:Bounds x="852" y="332" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="894" y="373" width="34" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToTrigger_di" bpmnElement="Flow_ToTrigger">
+        <di:waypoint x="188" y="200" />
+        <di:waypoint x="240" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToDagNotFound_di" bpmnElement="Flow_ToDagNotFound">
+        <di:waypoint x="290" y="258" />
+        <di:waypoint x="290" y="332" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWait_di" bpmnElement="Flow_ToWait">
+        <di:waypoint x="340" y="200" />
+        <di:waypoint x="400" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPollMerge_di" bpmnElement="Flow_ToPollMerge">
+        <di:waypoint x="468" y="200" />
+        <di:waypoint x="505" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToGetStatus_di" bpmnElement="Flow_ToGetStatus">
+        <di:waypoint x="555" y="200" />
+        <di:waypoint x="590" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToFinished_di" bpmnElement="Flow_ToFinished">
+        <di:waypoint x="690" y="200" />
+        <di:waypoint x="745" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Finished_di" bpmnElement="Flow_Finished">
+        <di:waypoint x="795" y="200" />
+        <di:waypoint x="862" y="200" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="790" y="160" width="62" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_StillRunning_di" bpmnElement="Flow_StillRunning">
+        <di:waypoint x="770" y="225" />
+        <di:waypoint x="770" y="272" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="776" y="236" width="88" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PollAgain_di" bpmnElement="Flow_PollAgain">
+        <di:waypoint x="752" y="290" />
+        <di:waypoint x="530" y="290" />
+        <di:waypoint x="530" y="225" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_PollInterval_di" bpmnElement="Association_PollInterval">
+        <di:waypoint x="760" y="305" />
+        <di:waypoint x="700" y="370" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToTimedOut_di" bpmnElement="Flow_ToTimedOut">
+        <di:waypoint x="870" y="368" />
+        <di:waypoint x="870" y="412" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToOutcome_di" bpmnElement="Flow_ToOutcome">
+        <di:waypoint x="940" y="200" />
+        <di:waypoint x="990" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Succeeded_di" bpmnElement="Flow_Succeeded">
+        <di:waypoint x="1040" y="200" />
+        <di:waypoint x="1090" y="200" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1044" y="182" width="38" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCompleted_di" bpmnElement="Flow_ToCompleted">
+        <di:waypoint x="1190" y="200" />
+        <di:waypoint x="1242" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Failed_di" bpmnElement="Flow_Failed">
+        <di:waypoint x="1015" y="225" />
+        <di:waypoint x="1015" y="440" />
+        <di:waypoint x="1090" y="440" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1024" y="413" width="28" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToGetLogs_di" bpmnElement="Flow_ToGetLogs">
+        <di:waypoint x="1190" y="440" />
+        <di:waypoint x="1240" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReview_di" bpmnElement="Flow_ToReview">
+        <di:waypoint x="1340" y="440" />
+        <di:waypoint x="1390" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToFailed_di" bpmnElement="Flow_ToFailed">
+        <di:waypoint x="1490" y="440" />
+        <di:waypoint x="1542" y="440" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
