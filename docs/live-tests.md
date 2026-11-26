@@ -17,10 +17,13 @@ SDK upgrade, which can change default checksum behaviour.
 | `ObjectLockProbeLiveIT` | object-storage | Probe: multipart part checksums and the Object Lock requests |
 | `ObjectStorageManagementLiveIT` | object-storage | The management connector creates and deletes a bucket, a credentials group and an access key (and proves the key works against S3); with the project's permission, an Object Lock bucket with a one-day `GOVERNANCE` default retention |
 | `KeyFlowLiveIT` | auth | The key flow yields a cached token the management API accepts; a key signed with the wrong private key fails as `AUTHENTICATION_FAILED` |
+| `StackitWorkflowsLiveIT` | workflows | Triggers `examples/dags/camunda_stackit_demo.py` once to succeed and once to fail; reads run, task instances, XCom and logs; a second trigger with the same run ID must return the existing run (the `409` path) |
+| `WorkflowsSessionProbeLiveIT` | workflows | Probe: the session endpoint's `Set-Cookie` names and attributes (Q2), which API versions the session opens (Q5), what a missing or invalid cookie gets, the status of a duplicate run ID, and whether a STACKIT service account token is accepted (Q1) |
 
 Probes pass whichever way STACKIT answers. They print `FINDING` lines and write them to
-`connectors/object-storage/target/stackit-live-findings.txt`; carry new findings into
-[`stackit-object-storage-compatibility.md`](stackit-object-storage-compatibility.md).
+`connectors/<module>/target/stackit-live-findings.txt`; carry new findings into
+[`stackit-object-storage-compatibility.md`](stackit-object-storage-compatibility.md) or, for
+Workflows, [`stackit-workflows.md`](stackit-workflows.md) §6.
 
 Each run writes only below its own prefix,
 `camunda-stackit-connectors-live-it/<suite>/<timestamp>-<random>/`, and deletes everything it
@@ -36,6 +39,7 @@ compliance lock. A run stores under 2 MB for a few seconds and costs a fraction 
 | A bucket created for the tests | yes |
 | Access key ID and secret access key of an Object Storage credentials group in the same project | yes |
 | Project ID and a service account key JSON | only for `KeyFlowLiveIT` (role `reader`) and `ObjectStorageManagementLiveIT` (role `object-storage.admin`) |
+| A Workflows instance with `examples/dags/camunda_stackit_demo.py` loaded and unpaused, and a client in its OAuth2 identity provider (API Audience configured, Airflow role `User`) | only for the Workflows tests; see [`examples/README.md`](../examples/README.md#stackit-workflows). Either the Object Storage or the Workflows values suffice to start the script |
 
 Use a project that holds nothing else: any credential of a project can reach every bucket in it.
 
@@ -83,7 +87,10 @@ tools/live-tests.sh -Dit.test=StorageGridChecksumProbeLiveIT # one class
 
 `.secrets/` is gitignored and excluded from the Docker build context. The script prints which
 values are set, never the values. Without a service account the auth and management tests skip
-themselves; without any configuration everything is skipped.
+themselves; without any configuration everything is skipped. The Workflows suite runs when
+`STACKIT_IT_WORKFLOWS_INSTANCE_URL` is set; run it once per instance (Airflow 2.11 and 3.1) with
+`STACKIT_LIVE_ENV_FILE` to answer Q5 for both. Its runs, named `camunda-live-it-*`, stay in the
+DAG's history: the role `User` is not meant to delete them.
 
 Never print a credential, a token or a presigned URL from a test: a presigned URL contains the
 access key ID. `src/test/resources/logback-test.xml` keeps the HTTP wire logs off for that reason.
