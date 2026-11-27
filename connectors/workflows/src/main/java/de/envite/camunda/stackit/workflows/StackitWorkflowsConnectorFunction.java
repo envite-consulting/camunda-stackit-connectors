@@ -16,13 +16,9 @@
  */
 package de.envite.camunda.stackit.workflows;
 
-import de.envite.camunda.stackit.core.error.StackitConnectorErrors;
-import de.envite.camunda.stackit.core.error.StackitErrorCodes;
 import de.envite.camunda.stackit.core.template.TemplateGroups;
 import de.envite.camunda.stackit.workflows.client.AirflowApiClient;
-import de.envite.camunda.stackit.workflows.client.AirflowApiVersion;
 import de.envite.camunda.stackit.workflows.model.request.WorkflowsRequest;
-import de.envite.camunda.stackit.workflows.session.SessionCache;
 import io.camunda.connector.api.annotation.OutboundConnector;
 import io.camunda.connector.api.outbound.JobContext;
 import io.camunda.connector.api.outbound.OutboundConnectorContext;
@@ -46,9 +42,10 @@ import org.slf4j.LoggerFactory;
  * <p><strong>Discovery.</strong> Registered in {@code
  * META-INF/services/io.camunda.connector.api.outbound.OutboundConnectorFunction}.
  *
- * <p><strong>Session reuse.</strong> A {@code static} {@link SessionCache} keeps one session
- * provider per instance and client, so a runtime that polls many runs performs one token request
- * and one session handshake per session lifetime rather than one per job.
+ * <p><strong>Session reuse.</strong> {@link WorkflowsClients} keeps one session provider per
+ * instance and client, shared with the inbound connector, so a runtime that polls many runs
+ * performs one token request and one session handshake per session lifetime rather than one per
+ * job.
  *
  * @see <a href="https://docs.stackit.cloud/products/data-and-ai/workflows/basics/concepts/">STACKIT
  *     Workflows concepts: API Authentication</a>
@@ -100,8 +97,6 @@ public class StackitWorkflowsConnectorFunction implements OutboundConnectorFunct
   private static final Logger LOG =
       LoggerFactory.getLogger(StackitWorkflowsConnectorFunction.class);
 
-  private static final SessionCache SESSIONS = new SessionCache();
-
   private final Function<WorkflowsRequest, AirflowApiClient> clientFactory;
 
   /** Creates the connector as the runtime's service loader does. */
@@ -137,26 +132,12 @@ public class StackitWorkflowsConnectorFunction implements OutboundConnectorFunct
   }
 
   /**
-   * The production client: validated URLs, the shared session cache, the shared HTTP client.
+   * The production client, see {@link WorkflowsClients}.
    *
    * @param request the bound request; must not be {@code null}
    * @return the client, never {@code null}
    */
   static AirflowApiClient defaultClient(final WorkflowsRequest request) {
-    final AirflowApiVersion version = apiVersion(request.configuration().apiVersion());
-    return new AirflowApiClient(
-        version,
-        SESSIONS.sessionProvider(
-            WorkflowsEndpoints.instanceUri(request.configuration().instanceUrl()),
-            WorkflowsEndpoints.tokenUri(request.authentication().tokenUrl()),
-            request.authentication()));
-  }
-
-  static AirflowApiVersion apiVersion(final String raw) {
-    try {
-      return AirflowApiVersion.fromValue(raw);
-    } catch (final IllegalArgumentException e) {
-      throw StackitConnectorErrors.fatal(StackitErrorCodes.INVALID_INPUT, e.getMessage());
-    }
+    return WorkflowsClients.client(request.authentication(), request.configuration());
   }
 }
