@@ -77,6 +77,17 @@ curl -u demo:demo -X POST http://localhost:8080/v2/process-instances \
   -d '{"processDefinitionId": "stackit-object-storage-example", "variables": {}}'
 ```
 
+In Windows PowerShell, `curl` is an alias of `Invoke-WebRequest` and rejects these options, and
+passing JSON to `curl.exe` loses its quotes. Use `curl.exe` for the upload and `Invoke-RestMethod`
+for the JSON call (`ZGVtbzpkZW1v` is `demo:demo` in Base64):
+
+```powershell
+curl.exe -u demo:demo -X POST http://localhost:8080/v2/deployments -F "resources=@bpmn/stackit-object-storage-example.bpmn"
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v2/process-instances `
+  -Headers @{ Authorization = 'Basic ZGVtbzpkZW1v' } -ContentType 'application/json' `
+  -Body '{"processDefinitionId": "stackit-object-storage-example", "variables": {}}'
+```
+
 In Operate the instance completes with an `uploadResult` variable; the object is in your bucket.
 
 ### When it fails
@@ -176,6 +187,23 @@ curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content
 # Failure: the task export raises
 curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
   -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1003", "delaySeconds": 0, "shouldFail": true}}'
+```
+
+The same in Windows PowerShell (see [above](#3-deploy-and-run) for why not `curl`):
+
+```powershell
+curl.exe -u demo:demo -X POST http://localhost:8080/v2/deployments -F "resources=@bpmn/stackit-workflows-example.bpmn"
+
+function Start-Example($variables) {
+  $body = @{ processDefinitionId = 'stackit-workflows-example'; variables = $variables } | ConvertTo-Json
+  Invoke-RestMethod -Method Post -Uri http://localhost:8080/v2/process-instances `
+    -Headers @{ Authorization = 'Basic ZGVtbzpkZW1v' } -ContentType 'application/json' -Body $body
+}
+
+Start-Example @{ orderId = 'A-1001'; delaySeconds = 20;  shouldFail = $false }   # success
+Start-Example @{ orderId = 'A-1002'; delaySeconds = 120; shouldFail = $false }   # long run
+Start-Example @{ orderId = 'A-1003'; delaySeconds = 0;   shouldFail = $true }    # failure
+Start-Example @{ orderId = 'A-1004'; dagId = 'camunda_stackit_dmeo' }            # DAG not found
 ```
 
 Add `"dagId": "camunda_stackit_dmeo"` to the variables to see the error boundary event: the
