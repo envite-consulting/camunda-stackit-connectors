@@ -335,9 +335,9 @@ the answers here.
   third-party notice **before** the Apache text.
 - [x] The module `README.md` follows `connectors/object-storage/README.md` (for these two connectors it is that file).
 - [x] `npm --prefix tools run validate:templates` passes (checked 2026-11-27: all 5 template files valid).
-- [ ] Live tests ran against the release candidate. The compatibility notes record runs with AWS SDK 2.59.0
+- [x] Live tests ran against the release candidate. The compatibility notes record runs with AWS SDK 2.59.0
   in both regions on 2026-11-16 and 2026-11-19; repeat them if anything touching S3 changed since.
-- [ ] Every image URL is public and raster: listing logo ≥ 512 × 512, profile logo ≥ 230 × 230,
+- [x] Every image URL is public and raster: listing logo ≥ 512 × 512, profile logo ≥ 230 × 230,
   screenshots ≥ 1,500 × 1,200, no SVG.
 - [x] Screenshots exist for **both** connectors (`screenshot-object-storage.png`, `screenshot-object-storage-management.png`, taken 2026-11-27).
 - [x] Permission to show the STACKIT name and logo in the listing images: envite holds the logo rights
