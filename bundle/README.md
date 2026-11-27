@@ -20,6 +20,7 @@ contains every STACKIT connector.
 | STACKIT Object Storage | `de.envite:stackit-object-storage:1` | `de.envite.connectors.stackit.objectstorage.v1` |
 | STACKIT Object Storage Management | `de.envite:stackit-object-storage-management:1` | `de.envite.connectors.stackit.objectstorage.management.v1` |
 | STACKIT Workflows | `de.envite:stackit-workflows:1` | `de.envite.connectors.stackit.workflows.v1` |
+| STACKIT Workflows DAG run (inbound) | `de.envite:stackit-workflows-dag-run:1` | `de.envite.connectors.stackit.workflows.dagrun.v1` |
 
 **No container image is published.** Build it yourself as shown [below](#option-2-run-this-bundle).
 
@@ -165,7 +166,7 @@ dashes, dots to underscores (`camunda.client.grpc-address` → `CAMUNDA_CLIENT_G
 | `CONNECTOR_OUTBOUND_DISABLED` | Comma-separated connector types not to register | unset |
 | `CAMUNDA_CONNECTOR_SECRETPROVIDER_ENVIRONMENT_PREFIX` | Prefix for environment secrets | `SECRET_` |
 | `CAMUNDA_CONNECTOR_SECRETPROVIDER_CONSOLE_ENABLED` | Read Console-managed secrets (hybrid mode) | `false` |
-| `CAMUNDA_CONNECTOR_POLLING_ENABLED` | Process-definition polling, needed only by inbound connectors; every STACKIT connector is outbound | `false` |
+| `CAMUNDA_CONNECTOR_POLLING_ENABLED` | Process-definition polling, needed by inbound connectors such as the STACKIT Workflows DAG run event. Set `false` only if no process uses an inbound connector | `true` |
 | `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` | Served actuator endpoints | `health,metrics,loggers` |
 | `LOGGING_LEVEL_DE_ENVITE_CAMUNDA_STACKIT` | Connector log level | `INFO` |
 | `JAVA_TOOL_OPTIONS` | Extra JVM options, e.g. a trust store for a cluster behind a private CA: `-Djavax.net.ssl.trustStore=/certs/truststore.jks -Djavax.net.ssl.trustStorePassword=…`. `JAVAX_NET_SSL_TRUSTSTORE` does **not** work on this image; only `camunda/connectors-bundle`'s start script translates it | unset |

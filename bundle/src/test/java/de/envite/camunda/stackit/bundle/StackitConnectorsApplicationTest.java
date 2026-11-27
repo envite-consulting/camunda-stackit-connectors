@@ -18,7 +18,9 @@ package de.envite.camunda.stackit.bundle;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.camunda.connector.runtime.core.config.InboundConnectorConfiguration;
 import io.camunda.connector.runtime.core.config.OutboundConnectorConfiguration;
+import io.camunda.connector.runtime.core.inbound.InboundConnectorFactory;
 import io.camunda.connector.runtime.core.outbound.OutboundConnectorFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -54,7 +56,8 @@ import org.springframework.context.ApplicationContext;
  * camunda.client.worker.defaults.enabled=false} keeps the workers closed, which does not affect
  * discovery - {@code DefaultOutboundConnectorFactory} populates its registry in its constructor,
  * long before {@code OutboundConnectorManager} would open any worker. Inbound process-definition
- * polling is already off in {@code application.yaml}.
+ * polling, which {@code application.yaml} switches on for the Workflows DAG run event, is switched
+ * off here for the same reason; the inbound factory registers its connectors regardless.
  */
 @SpringBootTest(
     properties = {
@@ -83,12 +86,17 @@ class StackitConnectorsApplicationTest {
   /** The job type of the STACKIT Workflows connector, from its own module. */
   private static final String WORKFLOWS_TYPE = "de.envite:stackit-workflows:1";
 
+  /** The connector type of the STACKIT Workflows DAG run event, the bundle's inbound connector. */
+  private static final String WORKFLOWS_DAG_RUN_TYPE = "de.envite:stackit-workflows-dag-run:1";
+
   /** Connector implementations must come from this repository, not from a coincidental namesake. */
   private static final String STACKIT_PACKAGE_PREFIX = "de.envite.camunda.stackit.";
 
   @Autowired private ApplicationContext applicationContext;
 
   @Autowired private OutboundConnectorFactory outboundConnectorFactory;
+
+  @Autowired private InboundConnectorFactory inboundConnectorFactory;
 
   @Test
   void contextLoads() {
@@ -105,6 +113,17 @@ class StackitConnectorsApplicationTest {
                 + " @OutboundConnector annotation is missing")
         .extracting(OutboundConnectorConfiguration::type)
         .contains(OBJECT_STORAGE_TYPE, OBJECT_STORAGE_MANAGEMENT_TYPE, WORKFLOWS_TYPE);
+  }
+
+  @Test
+  void discoversTheStackitWorkflowsDagRunInboundConnector() {
+    assertThat(inboundConnectorFactory.getActiveConfigurations())
+        .as(
+            "the runtime's inbound connector registry - missing means the"
+                + " META-INF/services/io.camunda.connector.api.inbound.InboundConnectorExecutable"
+                + " entry or the @InboundConnector annotation of the workflows module is missing")
+        .extracting(InboundConnectorConfiguration::type)
+        .contains(WORKFLOWS_DAG_RUN_TYPE);
   }
 
   @ParameterizedTest

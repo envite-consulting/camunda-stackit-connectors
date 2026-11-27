@@ -58,10 +58,12 @@ camunda:
       # Drives the process-definition import that *inbound* connectors need: the runtime polls the
       # cluster for deployed process definitions and activates inbound executables from them.
       #
-      # Every connector in this bundle is OUTBOUND, so the poll loop would do nothing but generate
-      # cluster traffic. Set CAMUNDA_CONNECTOR_POLLING_ENABLED=true if you mount an additional
-      # inbound connector into this runtime (see bundle/README.md, "Adding more connectors").
-      enabled: false
+      # On, because the bundle ships an inbound connector: the STACKIT Workflows DAG run event
+      # (de.envite:stackit-workflows-dag-run:1). Without the import that intermediate catch event is
+      # never activated and its process instances wait forever, without an incident. Set
+      # CAMUNDA_CONNECTOR_POLLING_ENABLED=false only if no process uses it; that saves a periodic
+      # query against the cluster.
+      enabled: true
 
 logging:
   level:
