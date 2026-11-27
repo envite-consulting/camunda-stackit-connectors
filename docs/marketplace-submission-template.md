@@ -38,6 +38,7 @@ Fill this table first; the rest of the sheet refers to it.
 | `{{RELEASE_TAG}}` | Git tag of the released version the listing points at | `v0.1.0` | `v0.1.0` |
 | `{{TEMPLATE_FILE}}` | Generated template in `connectors/{{MODULE}}/element-templates/` (not `hybrid/`, not `versioned/`) | `stackit-object-storage-outbound-connector.json` | `stackit-object-storage-management-outbound-connector.json` |
 | `{{DOCS_ANCHOR}}` | Section of the module README that covers this connector, if it shares one | *(empty)* | `#management-connector` |
+| `{{SCREENSHOT_FILE}}` | The connector's screenshot in `docs/marketplace-assets/` | `screenshot-object-storage.png` | `screenshot-object-storage-management.png` |
 | `{{SDK_VERSION}}` | `version.connectors` in the root `pom.xml` | `8.10.4` | `8.10.4` |
 | `{{CAMUNDA_MINOR}}` | Minor from `camunda.engine.version.range` | `8.10` | `8.10` |
 | `{{WHAT_IT_DOES}}` | One clause: what a process can do with it | `store, retrieve and protect files in STACKIT Object Storage` | `create and manage buckets, credentials groups, access keys and Object Lock settings in STACKIT Object Storage` |
@@ -63,11 +64,12 @@ Derived URLs, used below:
 {{DOCS_URL}}         = https://github.com/envite-consulting/camunda-stackit-connectors/blob/{{RELEASE_TAG}}/connectors/{{MODULE}}/README.md{{DOCS_ANCHOR}}
 {{LOGO_URL}}         = https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/{{RELEASE_TAG}}/docs/marketplace-assets/STACKIT_Logo_Bildmarke_Pos_Navy_RGB_Safespace.png
 {{COMPANY_LOGO_URL}} = https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/{{RELEASE_TAG}}/docs/marketplace-assets/envite_icon_aquamarine.png
+{{SCREENSHOT_URL}}   = https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/{{RELEASE_TAG}}/docs/marketplace-assets/{{SCREENSHOT_FILE}}
 ```
 
-Use a **release tag**, never `main`, in all four, so the listing never offers a template newer than
+Use a **release tag**, never `main`, in all five, so the listing never offers a template newer than
 the released jar (see [Releasing](../AGENTS.md#releasing)). The two logo URLs have no per-connector
-part: the logos are the same for every STACKIT connector.
+part: the logos are the same for every STACKIT connector. The screenshot is per connector.
 
 ## 2. The form
 
@@ -92,7 +94,7 @@ part: the logos are the same for every STACKIT connector.
 | Use Case | | generic | `Microservices orchestration` | `Microservices orchestration` | `Microservices orchestration` | Only three options: Human Task orchestration, Microservices orchestration, RPA Bot orchestration. The middle one is the closest fit for an integration connector |
 | Link to App Listing Logo | * | generic | `{{LOGO_URL}}` | `https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/v0.1.0/docs/marketplace-assets/STACKIT_Logo_Bildmarke_Pos_Navy_RGB_Safespace.png` | same as Object Storage | Downloadable link, min **512 × 512 px**, **SVG is not supported** |
 | Link to App Profile Logo | | generic | `{{COMPANY_LOGO_URL}}` | `https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/v0.1.0/docs/marketplace-assets/envite_icon_aquamarine.png` | same as Object Storage | Downloadable link, min **230 × 230 px**, **SVG is not supported**. Assumed to be the company logo; see the note below |
-| Link to Screenshots | * | per connector | `<<TODO: link to the screenshots>>` | `<<TODO: link to the Object Storage screenshots>>` | `<<TODO: link to the Object Storage Management screenshots>>` | Visuals of the connector in action, min **1,500 × 1,200 px**. One link field only; see [open questions](#3-open-questions-for-the-marketplace-team) |
+| Link to Screenshots | * | per connector | `{{SCREENSHOT_URL}}` | `https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/v0.1.0/docs/marketplace-assets/screenshot-object-storage.png` | `https://raw.githubusercontent.com/envite-consulting/camunda-stackit-connectors/v0.1.0/docs/marketplace-assets/screenshot-object-storage-management.png` | Visuals of the connector in action, min **1,500 × 1,200 px**. One link field, so one image per connector; see [Screenshots](#screenshots) |
 | Link to Promo Video | | per connector | leave empty unless a video exists | leave empty | leave empty | Shown on the connector's primary page |
 
 **Logo assets** live in [`marketplace-assets/`](marketplace-assets/), shared by every connector, and
@@ -120,12 +122,32 @@ Illustrator export of the white variant).
 
 The `icon.svg` inside each module is the element template's icon. It is **not** a listing asset.
 
-**Screenshots to produce** (min 1,500 × 1,200 px each; none exist yet):
+#### Screenshots
 
-| Connector | Suggested screenshots |
-| --- | --- |
-| Object Storage | 1. The *Upload object* template in Modeler's properties panel, with the Authentication, Configuration and Operation groups visible. 2. A process that uploads a document, reads its metadata and creates a presigned download URL. 3. Operate showing the upload result JSON with `checksumSha256` |
-| Object Storage Management | 1. The *Create bucket* template in Modeler's properties panel with Object Lock switched on. 2. A provisioning process: create credentials group, create access key, store the secret. 3. Operate showing a result, or an error branch on `ALREADY_EXISTS` |
+One image per connector, because the form takes a single link. Both are **1875 × 1452 px** PNGs
+(above the recommended 1,500 × 1,200) in [`marketplace-assets/`](marketplace-assets/):
+
+| Connector | File | Shows |
+| --- | --- | --- |
+| Object Storage | `screenshot-object-storage.png` | The example process (document received, upload to STACKIT Object Storage, object stored) with the task selected. The properties panel shows the connector header, *Template: Applied*, **Authentication** with secret references, and **Operation** with *Upload object*, bucket and key |
+| Object Storage Management | `screenshot-object-storage-management.png` | A "provision a customer bucket" process with the *Create bucket* task selected. The panel shows **Configuration** (project ID as a secret reference, region) and **Operation** with *Create bucket*, the bucket name and the *Enable Object Lock* option with its irreversibility warning |
+
+Both are genuine captures of Camunda Desktop Modeler 5.51.1 with the element templates loaded from
+the generated files; nothing is mocked up. The values are demonstration values only: secret
+references (`{{secrets.…}}`) instead of credentials, and the made-up buckets `stackit-connectors-demo`
+and `acme-documents`. Framing choices: the Variables panel is closed, the properties panel is widened,
+the selection's context pad and the minimap button are hidden, and the status bar is cropped off (it carries the local
+`c8run` marker and "Camunda 8.10 (alpha)", which says more about Modeler 5.51's age than about the
+connectors). Object Lock is deliberately left unticked in the management shot, so the image does not
+suggest an irreversible setting as a default.
+
+The Object Storage image uses `examples/bpmn/stackit-object-storage-example.bpmn`. The management
+diagram was built for the capture and is **not in the repository**.
+
+**To retake them**, for example after a template change: install the generated templates under a
+`.camunda/element-templates/` folder next to the diagram, open it in Desktop Modeler, select the task,
+open the groups you want to show, and capture at least 1,500 × 1,200 px. Show no real credential,
+project ID or bucket.
 
 #### Description `*` (per connector)
 
@@ -286,7 +308,7 @@ the answers here.
    twice**, one listing per connector, each with its own title, template URL and the same repository.
    Confirm that two listings from one repository and one jar are accepted.
 2. **Compatible Version stops at Camunda 8.9**, while the SDK and element templates here target 8.10.
-3. **Link to Screenshots is a single URL.** Is a folder, an archive, or one image expected?
+3. **Link to Screenshots is a single URL.** Each listing gets one image, which is the safe reading. Ask whether a listing can show several, and whether a folder or archive is accepted.
 4. **What the App Profile Logo is** and where it is shown: the company logo, or a second app image?
 5. **Review turnaround** and any technical acceptance checklist beyond the guideline pages.
 
@@ -302,6 +324,8 @@ the answers here.
     "$B/connectors/object-storage/element-templates/stackit-object-storage-management-outbound-connector.json" \
     "$B/docs/marketplace-assets/STACKIT_Logo_Bildmarke_Pos_Navy_RGB_Safespace.png" \
     "$B/docs/marketplace-assets/envite_icon_aquamarine.png" \
+    "$B/docs/marketplace-assets/screenshot-object-storage.png" \
+    "$B/docs/marketplace-assets/screenshot-object-storage-management.png" \
     "https://github.com/envite-consulting/camunda-stackit-connectors/blob/v0.1.0/connectors/object-storage/README.md"; do
     curl -s -L -o /dev/null -w '%{http_code}  %{url_effective}\n' "$u"
   done
@@ -315,7 +339,7 @@ the answers here.
   in both regions on 2026-11-16 and 2026-11-19; repeat them if anything touching S3 changed since.
 - [ ] Every image URL is public and raster: listing logo ≥ 512 × 512, profile logo ≥ 230 × 230,
   screenshots ≥ 1,500 × 1,200, no SVG.
-- [ ] Screenshots exist for **both** connectors (none yet).
+- [x] Screenshots exist for **both** connectors (`screenshot-object-storage.png`, `screenshot-object-storage-management.png`, taken 2026-11-27).
 - [x] Permission to show the STACKIT name and logo in the listing images: envite holds the logo rights
   as a STACKIT partner (confirmed 2026-11-27).
 - [x] The contact mailbox is monitored. The form says only that it is for internal communication.
