@@ -18,6 +18,7 @@ Maintained by [envite consulting GmbH](https://www.envite.de), a Camunda partner
 | [STACKIT Object Storage](connectors/object-storage) | Upload, download, copy, delete, list and inspect objects; presigned download and upload URLs; Object Lock retention and legal holds | An Object Storage access key |
 | [STACKIT Object Storage Management](connectors/object-storage#management-connector) | Create and delete buckets (optionally with Object Lock), credentials groups and access keys; manage the project compliance lock and a bucket's default retention | A STACKIT service account key |
 | [STACKIT Workflows](connectors/workflows) | Trigger Airflow DAG runs on STACKIT Workflows (Airflow 2.11 and 3.1) and read their state, task instances, XCom results and logs | A client in the identity provider configured on the Workflows instance |
+| [STACKIT Workflows DAG run](connectors/workflows#dag-run-event-inbound) | Inbound intermediate catch event: continue the process when its DAG run is finished, without a polling loop in BPMN | The same client |
 
 The two Object Storage connectors ship in one jar, each with its own element template; Workflows
 has its own jar and template.
@@ -56,6 +57,7 @@ or from the modules:
   - `stackit-object-storage-management-outbound-connector.json`: buckets, credentials, Object Lock settings
 - [`connectors/workflows/element-templates/`](connectors/workflows/element-templates)
   - `stackit-workflows-outbound-connector.json`: Airflow DAG runs on STACKIT Workflows
+  - `stackit-workflows-dag-run-intermediate-connector.json`: wait for a DAG run to finish
 
 **Desktop Modeler:** put them into `.camunda/element-templates/` next to your diagram (or in any
 parent directory), or into the Modeler's user data directory, then reload with `Ctrl+R` / `Cmd+R`.
@@ -145,9 +147,6 @@ With Podman, point Testcontainers at its socket first:
 - **Archiving**: blocked until STACKIT publishes an API for its Archiving Service. Object Lock,
   which both connectors above cover, is the available substitute;
   [the design document](connectors/archiving) explains where it falls short.
-- **Workflows inbound connector**: wait for a DAG run without a polling loop in BPMN; the outbound
-  connector is [available](connectors/workflows), the research is in
-  [`docs/stackit-workflows.md`](docs/stackit-workflows.md).
 - **KMS**, **Dremio** and further services on request.
 
 Ideas and issues are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md).

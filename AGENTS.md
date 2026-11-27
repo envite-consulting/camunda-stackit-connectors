@@ -17,7 +17,7 @@ connectors/
   pom.xml                      stackit-connectors-parent    parent for connector modules
   object-storage/              stackit-connector-object-storage   ← implemented: data plane + management
   archiving/                   design doc only, no pom yet
-  workflows/                   stackit-connector-workflows        ← implemented: Airflow REST API of a Workflows instance
+  workflows/                   stackit-connector-workflows        ← implemented: outbound + inbound DAG run event, Airflow REST API
 bundle/                        stackit-connectors-bundle    runnable Connector Runtime
 docs/                          cross-cutting technical docs (incl. stackit-workflows.md research)
 examples/                      docker-compose, example BPMN (bpmn/) and the example Airflow DAG (dags/)
@@ -212,6 +212,18 @@ It has no integration tier: an Airflow container lacks the STACKIT session endpo
 WireMock; `ExampleProcessConsistencyTest` keeps `examples/bpmn/stackit-workflows-example.bpmn` in step
 with the generated template; the live tests trigger `examples/dags/camunda_stackit_demo.py` itself,
 never a copy.
+
+The module also ships an **inbound** connector, `inbound.StackitWorkflowsDagRunConnector`: an
+intermediate catch event that polls the run of every waiting process instance and correlates the
+finished ones. It is a second `<connector>` in the generator configuration and a line in
+`META-INF/services/io.camunda.connector.api.inbound.InboundConnectorExecutable`, and it only runs
+with process-definition polling on (`camunda.connector.polling.enabled`, `true` in the bundle).
+**Inbound properties are bound with FEEL evaluated only in fields annotated `@FEEL`** - unlike
+outbound variables, which Zeebe has evaluated before the connector sees them. A FEEL-capable
+property of an inbound template without `@FEEL` receives the literal `=expression`; that is why the
+shared `WorkflowsAuthentication` and `WorkflowsConfiguration` carry the annotation too. The inbound
+tests bind through Camunda's FEEL-aware object mapper (`FakeIntermediateContext`) to catch exactly
+this; do not replace that with pre-evaluated values.
 
 Operations without inputs (`listBuckets`, `getComplianceLock`, ...) make the engine send no
 `operation` variable, which Jackson rejects for an external type id. `ManagementRequest`'s

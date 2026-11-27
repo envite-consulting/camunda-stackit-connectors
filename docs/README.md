@@ -13,7 +13,7 @@ Cross-cutting engineering documentation. Per-connector documentation lives besid
 | --- | --- |
 | [`connectors/object-storage/`](../connectors/object-storage/README.md) | **Implemented**: Object Storage (10 operations) and Object Storage Management (17 operations) |
 | [`connectors/archiving/`](../connectors/archiving/README.md) | Design document. STACKIT Archiving Service has no public API |
-| [`connectors/workflows/`](../connectors/workflows/README.md) | **Implemented**: STACKIT Workflows outbound connector (6 operations) on the Airflow REST API of an instance, Airflow 2.11 and 3.1. Inbound connector planned |
+| [`connectors/workflows/`](../connectors/workflows/README.md) | **Implemented**: STACKIT Workflows outbound connector (6 operations) and DAG run event (inbound) on the Airflow REST API of an instance, Airflow 2.11 and 3.1 |
 
 Conventions: every factual claim carries a source link; facts that can drift carry a date; anything
 unverified goes into the document's open-questions section, not its body.

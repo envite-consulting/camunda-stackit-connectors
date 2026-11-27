@@ -1,8 +1,8 @@
 # STACKIT Workflows — design notes
 
 > **Status: research behind [`connectors/workflows`](../connectors/workflows/README.md).** The
-> outbound connector (§4.1) is implemented; the inbound connector (§4.2, shape C) and `/wait`
-> (§4.3) are not. Research verified **2026-11-09**; §6 records what the implementation verified
+> outbound connector (§4.1) and the inbound connector (§4.2, shape C, as an intermediate catch
+> event) are implemented; `/wait` (§4.3) is not. Research verified **2026-11-09**; §6 records what the implementation verified
 > on 2026-11-26 and which questions are still open. Until the live probes have run, every
 > statement about STACKIT's behaviour beyond its documentation is unverified.
 
@@ -164,6 +164,12 @@ DAG runs last minutes to hours.
 | **A. Long-polling outbound** | One task triggers and polls until done | Simplest model, but holds a worker thread per run and exceeds job timeouts. Short runs only, with a hard timeout |
 | **B. Trigger + message catch event** | The DAG's last task publishes a Camunda message correlated on `dag_run_id` | Scales, but customers must change their DAGs and store Camunda credentials in Airflow; a killed DAG never calls back (needs a boundary timer). Document it |
 | **C. Trigger + inbound intermediate connector** | An inbound connector polls `get-dag-run` and correlates on `dag_run_id` | **Primary pattern**: no DAG changes, no held thread, sees failures too. Costs polling and needs de-duplication |
+
+**Implemented (2026-11-27):** shape C as `StackitWorkflowsDagRunConnector`, an intermediate message
+catch event. It correlates on `dag_run_id` through the event's message subscription; the
+de-duplication is the message ID derived from the element instance, plus a per-executable set of
+correlated element instances. Verified end to end against a plain Airflow 3.1 behind a local
+stand-in for the session endpoint (not against STACKIT).
 
 No inbound **start** event: Airflow has no webhook, so it would mean polling every run of every DAG.
 
