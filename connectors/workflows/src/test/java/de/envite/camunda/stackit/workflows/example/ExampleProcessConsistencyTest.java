@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.envite.camunda.stackit.workflows.StackitWorkflowsConnectorFunction;
+import de.envite.camunda.stackit.workflows.inbound.StackitWorkflowsDagRunConnector;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -62,9 +63,16 @@ class ExampleProcessConsistencyTest {
   /** The DAG ID the example process, the example DAG and the live tests share. */
   static final String DEMO_DAG_ID = "camunda_stackit_demo";
 
+  static final Path INBOUND_TEMPLATE =
+      MODULE.resolve("element-templates/stackit-workflows-dag-run-intermediate-connector.json");
+
   static JsonNode template;
+  static JsonNode inboundTemplate;
   static Document process;
   static List<ConnectorTask> tasks;
+
+  /** Elements carrying a template other than the outbound one: the DAG run event. */
+  static List<Element> events;
 
   record ConnectorTask(
       String id,
@@ -77,15 +85,22 @@ class ExampleProcessConsistencyTest {
   @BeforeAll
   static void load() throws Exception {
     template = new ObjectMapper().readTree(TEMPLATE.toFile());
+    inboundTemplate = new ObjectMapper().readTree(INBOUND_TEMPLATE.toFile());
     final DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
     factory.setNamespaceAware(true);
     factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
     process = factory.newDocumentBuilder().parse(BPMN.toFile());
     tasks = new ArrayList<>();
+    events = new ArrayList<>();
     final NodeList all = process.getElementsByTagNameNS(BPMN_NS, "*");
     for (int i = 0; i < all.getLength(); i++) {
       final Element element = (Element) all.item(i);
       if (!element.hasAttributeNS(ZEEBE, "modelerTemplate")) {
+        continue;
+      }
+      if (!StackitWorkflowsConnectorFunction.TEMPLATE_ID.equals(
+          element.getAttributeNS(ZEEBE, "modelerTemplate"))) {
+        events.add(element);
         continue;
       }
       final Map<String, String> inputs = new LinkedHashMap<>();
@@ -125,8 +140,90 @@ class ExampleProcessConsistencyTest {
     assertThat(processElement.getAttribute("id")).isEqualTo("stackit-workflows-example");
     assertThat(tasks)
         .extracting(task -> task.inputs().get("operationType"))
-        .containsExactlyInAnyOrder(
-            "triggerDagRun", "getDagRun", "getXcom", "getTaskInstances", "getTaskLogs");
+        .containsExactlyInAnyOrder("triggerDagRun", "getXcom", "getTaskInstances", "getTaskLogs");
+    assertThat(events)
+        .as("the run is awaited with the DAG run event, not with a polling loop")
+        .singleElement()
+        .satisfies(event -> {
+          assertThat(event.getLocalName()).isEqualTo("intermediateCatchEvent");
+          assertThat(event.getAttributeNS(ZEEBE, "modelerTemplate"))
+              .isEqualTo(StackitWorkflowsDagRunConnector.TEMPLATE_ID);
+        });
+  }
+
+  @Test
+  @DisplayName("the DAG run event carries the current inbound template, as Modeler writes it")
+  void dagRunEventMatchesItsTemplate() {
+    final Element event = events.get(0);
+    final String id = event.getAttribute("id");
+    assertThat(event.getAttributeNS(ZEEBE, "modelerTemplate"))
+        .isEqualTo(inboundTemplate.get("id").asText());
+    assertThat(event.getAttributeNS(ZEEBE, "modelerTemplateVersion"))
+        .isEqualTo(inboundTemplate.get("version").asText());
+    assertThat(event.getAttributeNS(ZEEBE, "modelerTemplateIcon"))
+        .isEqualTo(inboundTemplate.path("icon").path("contents").asText());
+    final Map<String, String> properties = new LinkedHashMap<>();
+    final NodeList nodes = event.getElementsByTagNameNS(ZEEBE, "property");
+    for (int i = 0; i < nodes.getLength(); i++) {
+      final Element property = (Element) nodes.item(i);
+      assertThat(properties.put(property.getAttribute("name"), property.getAttribute("value")))
+          .as("duplicate property %s on %s", property.getAttribute("name"), id)
+          .isNull();
+    }
+    final Map<String, JsonNode> bindings = new LinkedHashMap<>();
+    for (final JsonNode property : inboundTemplate.get("properties")) {
+      if ("zeebe:property".equals(property.path("binding").path("type").asText())) {
+        bindings.put(property.path("binding").path("name").asText(), property);
+      }
+    }
+    assertThat(bindings.keySet())
+        .as("%s: only template bindings", id)
+        .containsAll(properties.keySet());
+    bindings.forEach((name, property) -> {
+      if ("Hidden".equals(property.path("type").asText())) {
+        assertThat(properties.get(name))
+            .as("%s: hidden %s", id, name)
+            .isEqualTo(property.path("value").asText());
+      } else if (!property.path("optional").asBoolean(false)
+          && (property.path("constraints").path("notEmpty").asBoolean(false)
+              || property.has("value"))) {
+        assertThat(properties.get(name)).as("%s: required %s", id, name).isNotBlank();
+      }
+    });
+    assertThat(properties).containsEntry("inbound.type", StackitWorkflowsDagRunConnector.TYPE);
+
+    final Element definition =
+        (Element) event.getElementsByTagNameNS(BPMN_NS, "messageEventDefinition").item(0);
+    assertThat(definition).as("%s is a message catch event", id).isNotNull();
+    final Element message = messageById(definition.getAttribute("messageRef"));
+    assertThat(message.getAttribute("name")).as("message name").isNotBlank();
+    final Element subscription =
+        (Element) message.getElementsByTagNameNS(ZEEBE, "subscription").item(0);
+    assertThat(subscription).as("zeebe:subscription of the message").isNotNull();
+
+    // The connector reads the run named by dagRunId and publishes the payload with the key
+    // correlationKeyExpression extracts; the instance subscribes with correlationKey. All three
+    // have to name the same run, or the event waits forever.
+    assertThat(subscription.getAttribute("correlationKey"))
+        .as("process correlation key = the run the connector watches")
+        .isEqualTo(properties.get("dagRunId"));
+    assertThat(properties.get("correlationKeyExpression"))
+        .as("payload correlation key = the run ID in the payload")
+        .isEqualTo("=dagRunId");
+    assertThat(task("triggerDagRun").headers().get("resultExpression"))
+        .as("the trigger stores the run ID the event waits for")
+        .contains("exportRunId: response.dagRunId");
+  }
+
+  static Element messageById(final String messageId) {
+    final NodeList messages = process.getElementsByTagNameNS(BPMN_NS, "message");
+    for (int i = 0; i < messages.getLength(); i++) {
+      final Element message = (Element) messages.item(i);
+      if (messageId.equals(message.getAttribute("id"))) {
+        return message;
+      }
+    }
+    throw new AssertionError("no bpmn:message " + messageId);
   }
 
   @Test

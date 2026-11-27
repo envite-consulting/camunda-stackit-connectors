@@ -47,66 +47,40 @@
       <bpmn:incoming>Flow_ToWait</bpmn:incoming>
       <bpmn:outgoing>Flow_ToOutcome</bpmn:outgoing>
       <bpmn:startEvent id="StartEvent_Wait">
-        <bpmn:outgoing>Flow_ToPollMerge</bpmn:outgoing>
+        <bpmn:outgoing>Flow_ToRunFinishedEvent</bpmn:outgoing>
       </bpmn:startEvent>
-      <bpmn:sequenceFlow id="Flow_ToPollMerge" sourceRef="StartEvent_Wait" targetRef="Gateway_PollMerge" />
-      <bpmn:exclusiveGateway id="Gateway_PollMerge">
-        <bpmn:incoming>Flow_ToPollMerge</bpmn:incoming>
-        <bpmn:incoming>Flow_PollAgain</bpmn:incoming>
-        <bpmn:outgoing>Flow_ToGetStatus</bpmn:outgoing>
-      </bpmn:exclusiveGateway>
-      <bpmn:sequenceFlow id="Flow_ToGetStatus" sourceRef="Gateway_PollMerge" targetRef="ServiceTask_GetDagRun" />
-      <bpmn:serviceTask id="ServiceTask_GetDagRun" name="Get run status" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
+      <bpmn:sequenceFlow id="Flow_ToRunFinishedEvent" sourceRef="StartEvent_Wait" targetRef="CatchEvent_DagRunFinished" />
+      <bpmn:intermediateCatchEvent id="CatchEvent_DagRunFinished" name="DAG run finished" zeebe:modelerTemplate="de.envite.connectors.stackit.workflows.dagrun.v1" zeebe:modelerTemplateVersion="1" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNUQUNLSVQiPgogIDx0aXRsZT5TVEFDS0lUPC90aXRsZT4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMTguMzg1MyAxMS4zMzJMMTMuMzY2MiAzNC44NTAzSDI1LjkxNEwyOC42MTU5IDIyLjE5ODVINTcuNjgyOEw2MCAxMS4zMzJIMTguMzg1M1oiLz4KICA8cGF0aCBmaWxsPSIjMDA0RTVBIiBkPSJNMzguMTk2OSAyOC45ODI0TDM1LjQ4MTQgNDEuNzA2N0g2LjMxNzIxTDQgNTIuNTczMUg0NS43MDk3TDUwLjc0NDcgMjguOTgyNEgzOC4xOTY5WiIvPgo8L3N2Zz4K">
         <bpmn:extensionElements>
-          <zeebe:taskDefinition type="de.envite:stackit-workflows:1" retries="3" />
-          <zeebe:ioMapping>
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" target="authentication.tokenUrl" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" target="authentication.clientId" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" target="authentication.clientSecret" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" target="authentication.scope" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" target="authentication.audience" />
-            <zeebe:input source="basic" target="authentication.clientAuthentication" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" target="configuration.instanceUrl" />
-            <zeebe:input source="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" target="configuration.apiVersion" />
-            <zeebe:input source="getDagRun" target="operationType" />
-            <zeebe:input source="=exportDagId" target="operation.dagId" />
-            <zeebe:input source="=exportRunId" target="operation.dagRunId" />
-          </zeebe:ioMapping>
-          <zeebe:taskHeaders>
-            <zeebe:header key="elementTemplateVersion" value="1" />
-            <zeebe:header key="elementTemplateId" value="de.envite.connectors.stackit.workflows.v1" />
-            <zeebe:header key="resultExpression" value="={exportRunState: response.state}" />
-            <zeebe:header key="retryBackoff" value="PT30S" />
-          </zeebe:taskHeaders>
+          <zeebe:properties>
+            <zeebe:property name="inbound.type" value="de.envite:stackit-workflows-dag-run:1" />
+            <zeebe:property name="authentication.tokenUrl" value="{{secrets.STACKIT_WORKFLOWS_TOKEN_URL}}" />
+            <zeebe:property name="authentication.clientId" value="{{secrets.STACKIT_WORKFLOWS_CLIENT_ID}}" />
+            <zeebe:property name="authentication.clientSecret" value="{{secrets.STACKIT_WORKFLOWS_CLIENT_SECRET}}" />
+            <zeebe:property name="authentication.scope" value="{{secrets.STACKIT_WORKFLOWS_SCOPE}}" />
+            <zeebe:property name="authentication.audience" value="{{secrets.STACKIT_WORKFLOWS_AUDIENCE}}" />
+            <zeebe:property name="authentication.clientAuthentication" value="basic" />
+            <zeebe:property name="configuration.instanceUrl" value="{{secrets.STACKIT_WORKFLOWS_INSTANCE_URL}}" />
+            <zeebe:property name="configuration.apiVersion" value="{{secrets.STACKIT_WORKFLOWS_API_VERSION}}" />
+            <zeebe:property name="dagId" value="=exportDagId" />
+            <zeebe:property name="dagRunId" value="=exportRunId" />
+            <zeebe:property name="pollingInterval" value="PT15S" />
+            <zeebe:property name="correlationKeyExpression" value="=dagRunId" />
+            <zeebe:property name="resultExpression" value="={exportRunState: state}" />
+          </zeebe:properties>
         </bpmn:extensionElements>
-        <bpmn:incoming>Flow_ToGetStatus</bpmn:incoming>
-        <bpmn:outgoing>Flow_ToFinished</bpmn:outgoing>
-      </bpmn:serviceTask>
-      <bpmn:sequenceFlow id="Flow_ToFinished" sourceRef="ServiceTask_GetDagRun" targetRef="Gateway_RunFinished" />
-      <bpmn:exclusiveGateway id="Gateway_RunFinished" name="Run finished?" default="Flow_Finished">
-        <bpmn:incoming>Flow_ToFinished</bpmn:incoming>
-        <bpmn:outgoing>Flow_Finished</bpmn:outgoing>
-        <bpmn:outgoing>Flow_StillRunning</bpmn:outgoing>
-      </bpmn:exclusiveGateway>
-      <bpmn:sequenceFlow id="Flow_Finished" name="success or failed" sourceRef="Gateway_RunFinished" targetRef="EndEvent_RunFinished" />
-      <bpmn:sequenceFlow id="Flow_StillRunning" name="queued or running" sourceRef="Gateway_RunFinished" targetRef="TimerEvent_PollInterval">
-        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=list contains(["queued", "running"], exportRunState)</bpmn:conditionExpression>
-      </bpmn:sequenceFlow>
-      <bpmn:intermediateCatchEvent id="TimerEvent_PollInterval" name="Wait 15 s">
-        <bpmn:incoming>Flow_StillRunning</bpmn:incoming>
-        <bpmn:outgoing>Flow_PollAgain</bpmn:outgoing>
-        <bpmn:timerEventDefinition id="TimerEventDefinition_PollInterval">
-          <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT15S</bpmn:timeDuration>
-        </bpmn:timerEventDefinition>
+        <bpmn:incoming>Flow_ToRunFinishedEvent</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToRunFinished</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="MessageEventDefinition_DagRunFinished" messageRef="Message_DagRunFinished" />
       </bpmn:intermediateCatchEvent>
-      <bpmn:sequenceFlow id="Flow_PollAgain" sourceRef="TimerEvent_PollInterval" targetRef="Gateway_PollMerge" />
+      <bpmn:sequenceFlow id="Flow_ToRunFinished" sourceRef="CatchEvent_DagRunFinished" targetRef="EndEvent_RunFinished" />
       <bpmn:endEvent id="EndEvent_RunFinished" name="Run finished">
-        <bpmn:incoming>Flow_Finished</bpmn:incoming>
+        <bpmn:incoming>Flow_ToRunFinished</bpmn:incoming>
       </bpmn:endEvent>
-      <bpmn:textAnnotation id="TextAnnotation_PollInterval">
-        <bpmn:text>PT15S keeps the demo short. In production poll every few minutes (PT2M to PT10M): every round is a job and an Airflow API call, and real DAG runs take minutes to hours.</bpmn:text>
+      <bpmn:textAnnotation id="TextAnnotation_PollingInterval">
+        <bpmn:text>The connector runtime reads the run every 15 s on the process's behalf and continues once it is success or failed. 15 s keeps the demo short; in production poll every few minutes (PT1M to PT5M).</bpmn:text>
       </bpmn:textAnnotation>
-      <bpmn:association id="Association_PollInterval" associationDirection="None" sourceRef="TimerEvent_PollInterval" targetRef="TextAnnotation_PollInterval" />
+      <bpmn:association id="Association_PollingInterval" associationDirection="None" sourceRef="CatchEvent_DagRunFinished" targetRef="TextAnnotation_PollingInterval" />
     </bpmn:subProcess>
     <bpmn:boundaryEvent id="BoundaryEvent_Timeout" name="15 min" attachedToRef="SubProcess_WaitForRun">
       <bpmn:outgoing>Flow_ToTimedOut</bpmn:outgoing>
@@ -229,6 +203,11 @@
     </bpmn:endEvent>
   </bpmn:process>
   <bpmn:error id="Error_DagNotFound" name="DAG not found" errorCode="DAG_NOT_FOUND" />
+  <bpmn:message id="Message_DagRunFinished" name="stackit-workflows-example-dag-run-finished">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=exportRunId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
   <bpmndi:BPMNDiagram id="BPMNDiagram_1">
     <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="stackit-workflows-example">
       <bpmndi:BPMNShape id="StartEvent_OrderReceived_di" bpmnElement="StartEvent_OrderReceived">
@@ -252,32 +231,20 @@
       <bpmndi:BPMNShape id="StartEvent_Wait_di" bpmnElement="StartEvent_Wait">
         <dc:Bounds x="432" y="182" width="36" height="36" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Gateway_PollMerge_di" bpmnElement="Gateway_PollMerge" isMarkerVisible="true">
-        <dc:Bounds x="505" y="175" width="50" height="50" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="ServiceTask_GetDagRun_di" bpmnElement="ServiceTask_GetDagRun">
-        <dc:Bounds x="590" y="160" width="100" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Gateway_RunFinished_di" bpmnElement="Gateway_RunFinished" isMarkerVisible="true">
-        <dc:Bounds x="745" y="175" width="50" height="50" />
+      <bpmndi:BPMNShape id="CatchEvent_DagRunFinished_di" bpmnElement="CatchEvent_DagRunFinished">
+        <dc:Bounds x="552" y="182" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="736" y="145" width="68" height="14" />
+          <dc:Bounds x="527" y="145" width="86" height="14" />
         </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="TextAnnotation_PollingInterval_di" bpmnElement="TextAnnotation_PollingInterval">
+        <dc:Bounds x="610" y="240" width="220" height="96" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="EndEvent_RunFinished_di" bpmnElement="EndEvent_RunFinished">
         <dc:Bounds x="862" y="182" width="36" height="36" />
         <bpmndi:BPMNLabel>
           <dc:Bounds x="849" y="225" width="62" height="14" />
         </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="TimerEvent_PollInterval_di" bpmnElement="TimerEvent_PollInterval">
-        <dc:Bounds x="752" y="272" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="796" y="283" width="48" height="14" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="TextAnnotation_PollInterval_di" bpmnElement="TextAnnotation_PollInterval">
-        <dc:Bounds x="430" y="370" width="300" height="70" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="EndEvent_TimedOut_di" bpmnElement="EndEvent_TimedOut">
         <dc:Bounds x="852" y="412" width="36" height="36" />
@@ -339,40 +306,17 @@
         <di:waypoint x="340" y="200" />
         <di:waypoint x="400" y="200" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToPollMerge_di" bpmnElement="Flow_ToPollMerge">
+      <bpmndi:BPMNEdge id="Flow_ToRunFinishedEvent_di" bpmnElement="Flow_ToRunFinishedEvent">
         <di:waypoint x="468" y="200" />
-        <di:waypoint x="505" y="200" />
+        <di:waypoint x="552" y="200" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToGetStatus_di" bpmnElement="Flow_ToGetStatus">
-        <di:waypoint x="555" y="200" />
-        <di:waypoint x="590" y="200" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToFinished_di" bpmnElement="Flow_ToFinished">
-        <di:waypoint x="690" y="200" />
-        <di:waypoint x="745" y="200" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_Finished_di" bpmnElement="Flow_Finished">
-        <di:waypoint x="795" y="200" />
+      <bpmndi:BPMNEdge id="Flow_ToRunFinished_di" bpmnElement="Flow_ToRunFinished">
+        <di:waypoint x="588" y="200" />
         <di:waypoint x="862" y="200" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="790" y="160" width="62" height="27" />
-        </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_StillRunning_di" bpmnElement="Flow_StillRunning">
-        <di:waypoint x="770" y="225" />
-        <di:waypoint x="770" y="272" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="776" y="236" width="88" height="14" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_PollAgain_di" bpmnElement="Flow_PollAgain">
-        <di:waypoint x="752" y="290" />
-        <di:waypoint x="530" y="290" />
-        <di:waypoint x="530" y="225" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Association_PollInterval_di" bpmnElement="Association_PollInterval">
-        <di:waypoint x="760" y="305" />
-        <di:waypoint x="700" y="370" />
+      <bpmndi:BPMNEdge id="Association_PollingInterval_di" bpmnElement="Association_PollingInterval">
+        <di:waypoint x="580" y="216" />
+        <di:waypoint x="640" y="240" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToTimedOut_di" bpmnElement="Flow_ToTimedOut">
         <di:waypoint x="870" y="368" />

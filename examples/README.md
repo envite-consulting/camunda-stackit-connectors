@@ -120,8 +120,9 @@ The uploaded object stays in your bucket.
 
 Runs [`dags/camunda_stackit_demo.py`](dags/camunda_stackit_demo.py) on your STACKIT Workflows
 instance from [`bpmn/stackit-workflows-example.bpmn`](bpmn/stackit-workflows-example.bpmn): start the
-run, poll its state every 15 s, then fetch the result from XCom, or on failure find the failed task,
-fetch the end of its log and put it into a user task. Connector details:
+run, wait in the *DAG run finished* event until the connector runtime sees the run finished (it
+reads the run every 15 s on the process's behalf), then fetch the result from XCom, or on failure
+find the failed task, fetch the end of its log and put it into a user task. Connector details:
 [`connectors/workflows`](../connectors/workflows/README.md).
 
 ### Prerequisites
@@ -158,17 +159,23 @@ docker compose up -d --build
 ```
 
 Instance URL, API version, token URL, scope and audience are secrets, like client ID and secret:
-the five connector tasks reference them as `{{secrets.STACKIT_WORKFLOWS_*}}`, so `.env` is the one
+the four connector tasks and the *DAG run finished* event reference them as `{{secrets.STACKIT_WORKFLOWS_*}}`, so `.env` is the one
 place to change them, not every task, and they belong to the environment rather than to process
 data. Leave optional values empty but keep the lines. If you do not use Object Storage, put any
 placeholder into the two `SECRET_STACKIT_S3_*` values; Compose requires them.
 
-Link the template for Desktop Modeler (on Windows copy it):
+Link both templates for Desktop Modeler (on Windows copy them):
 
 ```bash
 ln -sf ../../../connectors/workflows/element-templates/stackit-workflows-outbound-connector.json \
+       ../../../connectors/workflows/element-templates/stackit-workflows-dag-run-intermediate-connector.json \
        examples/.camunda/element-templates/
 ```
+
+The *DAG run finished* event is an inbound connector: the runtime activates it from the deployed
+process, which needs process-definition polling (`CAMUNDA_CONNECTOR_POLLING_ENABLED`, on in this
+bundle). Once the process is deployed, `docker compose logs stackit-connectors` shows an
+`Activity[... tag=Lifecycle ...]` line for it.
 
 ### 3. Deploy and run
 
@@ -180,7 +187,7 @@ curl -u demo:demo -X POST http://localhost:8080/v2/deployments \
 curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
   -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1001", "delaySeconds": 20, "shouldFail": false}}'
 
-# A long run: the polling loop turns about eight times
+# A long run: the instance waits in *DAG run finished* for about two minutes
 curl -u demo:demo -X POST http://localhost:8080/v2/process-instances -H 'Content-Type: application/json' \
   -d '{"processDefinitionId": "stackit-workflows-example", "variables": {"orderId": "A-1002", "delaySeconds": 120, "shouldFail": false}}'
 
@@ -214,8 +221,8 @@ What Operate shows:
 
 | Start | Path | Variables |
 | --- | --- | --- |
-| Success | *Get run status* once or twice, *Get export result*, *Export completed* | `exportRunId` (`camunda-<processInstanceKey>-<elementInstanceKey>`), `exportRunState: "success"`, `exportResult: {"orderId": "A-1001", "exportedRecords": 42}` |
-| Long run | The loop *Get run status* → *Wait 15 s* several times, then as above | as above |
+| Success | *DAG run finished* for about 20 s, *Get export result*, *Export completed* | `exportRunId` (`camunda-<processInstanceKey>-<elementInstanceKey>`), `exportRunState: "success"`, `exportResult: {"orderId": "A-1001", "exportedRecords": 42}` |
+| Long run | *DAG run finished* for about two minutes, then as above | as above |
 | Failure | *Find failed task*, *Get log of failed task*, user task *Review failed export* (complete it in Tasklist), *Export failed* | `exportRunState: "failed"`, `failedTaskId: "export"`, `failureLog` ending in `RuntimeError: Export of order A-1003 failed …` |
 | Wrong DAG ID | *DAG not found* | none from Airflow |
 
@@ -234,5 +241,6 @@ example process*.
 | `NOT_FOUND` (in an incident, not *DAG not found*) | Another task's DAG or run is unknown, or the API version does not match the instance (`v1` vs `v2`) |
 | *DAG not found* end event | The DAG is not loaded (check the DAG list and import errors in the Airflow UI) or the DAG ID is mistyped |
 | `CONFLICT` … `is paused` | Unpause the DAG in the Airflow UI |
-| Runs stay `queued`, the loop spins until *Run timed out* | The DAG is paused and *Fail if DAG is paused* was switched off, or the instance has no capacity |
+| Runs stay `queued`, the instance waits in *DAG run finished* until *Run timed out* | The DAG is paused and *Fail if DAG is paused* was switched off, or the instance has no capacity |
 | `CONNECTION_ERROR` | The instance or IdP is not reachable from the connectors container (DNS, proxy, a network-attached instance) |
+| No incident, the instance waits in *DAG run finished* although the run is finished in Airflow | The event reports failures in its activity log, not as incidents: look for `the DAG run could not be read` in `docker compose logs stackit-connectors`. No `tag=Lifecycle` line for the event means it was never activated: process-definition polling is off |
