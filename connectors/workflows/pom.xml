@@ -21,6 +21,9 @@
     <element.template.id>de.envite.connectors.stackit.workflows.v1</element.template.id>
     <element.template.file>stackit-workflows-outbound-connector.json</element.template.file>
     <connector.class>de.envite.camunda.stackit.workflows.StackitWorkflowsConnectorFunction</connector.class>
+    <dagrun.element.template.id>de.envite.connectors.stackit.workflows.dagrun.v1</dagrun.element.template.id>
+    <dagrun.element.template.file>stackit-workflows-dag-run-intermediate-connector.json</dagrun.element.template.file>
+    <dagrun.connector.class>de.envite.camunda.stackit.workflows.inbound.StackitWorkflowsDagRunConnector</dagrun.connector.class>
   </properties>
 
   <dependencies>
@@ -57,6 +60,21 @@
                   <!-- Must equal @ElementTemplate(id = ...) or the file name mapping is ignored. -->
                   <templateId>${element.template.id}</templateId>
                   <templateFileName>${element.template.file}</templateFileName>
+                </file>
+              </files>
+              <generateHybridTemplates>true</generateHybridTemplates>
+            </connector>
+            <!--
+              The inbound DAG run event: a second template in the same jar, as the Object Storage
+              management connector is. It needs its own services file entry
+              (InboundConnectorExecutable); forgetting either fails silently.
+            -->
+            <connector>
+              <connectorClass>${dagrun.connector.class}</connectorClass>
+              <files>
+                <file>
+                  <templateId>${dagrun.element.template.id}</templateId>
+                  <templateFileName>${dagrun.element.template.file}</templateFileName>
                 </file>
               </files>
               <generateHybridTemplates>true</generateHybridTemplates>
