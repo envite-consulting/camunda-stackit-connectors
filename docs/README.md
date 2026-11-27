@@ -7,6 +7,7 @@ Cross-cutting engineering documentation. Per-connector documentation lives besid
 | --- | --- |
 | [`stackit-object-storage-compatibility.md`](stackit-object-storage-compatibility.md) | How STACKIT Object Storage (NetApp StorageGRID) deviates from Amazon S3: required AWS SDK checksum settings, addressing, supported operations, Object Lock, credentials, presigned URLs, limits, documentation defects. **Read it before writing S3 code against STACKIT** |
 | [`live-tests.md`](live-tests.md) | The opt-in test suite against a real STACKIT project: what it covers, how to set up a project, how to run it |
+| [`marketplace-submission-template.md`](marketplace-submission-template.md) | Reusable answer sheet for the Camunda Marketplace "Submit a Connector" form: every field, generic values prefilled, per-connector placeholders, open questions. Shared listing logo in [`marketplace-assets/`](marketplace-assets/) |
 
 | Connector | Status |
 | --- | --- |
