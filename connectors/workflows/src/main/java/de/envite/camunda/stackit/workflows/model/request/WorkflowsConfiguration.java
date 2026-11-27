@@ -17,6 +17,7 @@
 package de.envite.camunda.stackit.workflows.model.request;
 
 import de.envite.camunda.stackit.core.template.TemplateGroups;
+import io.camunda.connector.api.annotation.FEEL;
 import io.camunda.connector.generator.java.annotation.FeelMode;
 import io.camunda.connector.generator.java.annotation.TemplateProperty;
 import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyConstraints;
@@ -45,6 +46,7 @@ public record WorkflowsConfiguration(
             feel = FeelMode.optional,
             constraints = @PropertyConstraints(notEmpty = true))
         @NotBlank(message = "The URL of the Workflows instance is required")
+        @FEEL
         String instanceUrl,
     @TemplateProperty(
             label = "Airflow API version",
@@ -61,6 +63,7 @@ public record WorkflowsConfiguration(
             message =
                 "must be v1 (Airflow 2.11), v2 (Airflow 3.1), a FEEL expression or a secret"
                     + " reference")
+        @FEEL
         String apiVersion) {
 
   /**

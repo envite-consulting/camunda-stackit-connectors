@@ -18,6 +18,7 @@ package de.envite.camunda.stackit.workflows.model.request;
 
 import de.envite.camunda.stackit.core.template.TemplateGroups;
 import de.envite.camunda.stackit.workflows.auth.ClientAuthenticationMethod;
+import io.camunda.connector.api.annotation.FEEL;
 import io.camunda.connector.generator.java.annotation.FeelMode;
 import io.camunda.connector.generator.java.annotation.TemplateProperty;
 import io.camunda.connector.generator.java.annotation.TemplateProperty.PropertyConstraints;
@@ -55,6 +56,7 @@ public record WorkflowsAuthentication(
             feel = FeelMode.optional,
             constraints = @PropertyConstraints(notEmpty = true))
         @NotBlank(message = "The token URL of the identity provider is required")
+        @FEEL
         String tokenUrl,
     @TemplateProperty(
             label = "Client ID",
@@ -66,6 +68,7 @@ public record WorkflowsAuthentication(
             feel = FeelMode.optional,
             constraints = @PropertyConstraints(notEmpty = true))
         @NotBlank(message = "A client ID is required")
+        @FEEL
         String clientId,
     @TemplateProperty(
             label = "Client secret",
@@ -76,6 +79,7 @@ public record WorkflowsAuthentication(
             feel = FeelMode.optional,
             constraints = @PropertyConstraints(notEmpty = true))
         @NotBlank(message = "A client secret is required")
+        @FEEL
         String clientSecret,
     @TemplateProperty(
             label = "Scope",
@@ -85,6 +89,7 @@ public record WorkflowsAuthentication(
                 "Optional, space-separated. Entra ID needs the application ID URI of the API with"
                     + " /.default, for example api://my-airflow-api/.default.",
             feel = FeelMode.optional)
+        @FEEL
         String scope,
     @TemplateProperty(
             label = "Audience",
@@ -95,6 +100,7 @@ public record WorkflowsAuthentication(
                     + " The token's aud claim must match the API Audience configured on the"
                     + " instance, however the identity provider sets it.",
             feel = FeelMode.optional)
+        @FEEL
         String audience,
     @TemplateProperty(
             label = "Resource",
@@ -104,6 +110,7 @@ public record WorkflowsAuthentication(
                 "Optional RFC 8707 resource parameter. Leave empty unless your identity"
                     + " provider requires it.",
             feel = FeelMode.optional)
+        @FEEL
         String resource,
     @TemplateProperty(
             label = "Client authentication",
